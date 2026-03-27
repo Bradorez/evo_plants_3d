@@ -44,6 +44,7 @@ export function createControls(
   const riverViewInput = queryElement<HTMLInputElement>("riverViewInput");
   const waterDepthViewInput = queryElement<HTMLInputElement>("waterDepthViewInput");
   const moistureViewInput = queryElement<HTMLInputElement>("moistureViewInput");
+  const temperatureViewInput = queryElement<HTMLInputElement>("temperatureViewInput");
   const vegetationViewInput = queryElement<HTMLInputElement>("vegetationViewInput");
   const seedValue = queryElement<HTMLElement>("seedValue");
   const timeValue = queryElement<HTMLElement>("timeValue");
@@ -82,6 +83,7 @@ export function createControls(
       showRivers: riverViewInput.checked,
       showWaterDepth: waterDepthViewInput.checked,
       showMoisture: moistureViewInput.checked,
+      showTemperature: temperatureViewInput.checked,
       showVegetation: vegetationViewInput.checked,
     });
   };
@@ -91,6 +93,7 @@ export function createControls(
   riverViewInput.checked = initialState.viewOptions.showRivers;
   waterDepthViewInput.checked = initialState.viewOptions.showWaterDepth;
   moistureViewInput.checked = initialState.viewOptions.showMoisture;
+  temperatureViewInput.checked = initialState.viewOptions.showTemperature;
   vegetationViewInput.checked = initialState.viewOptions.showVegetation;
   updateRunningText();
   updateRainValue();
@@ -123,6 +126,7 @@ export function createControls(
   riverViewInput.addEventListener("change", emitViewOptions);
   waterDepthViewInput.addEventListener("change", emitViewOptions);
   moistureViewInput.addEventListener("change", emitViewOptions);
+  temperatureViewInput.addEventListener("change", emitViewOptions);
   vegetationViewInput.addEventListener("change", emitViewOptions);
 
   return {
@@ -166,6 +170,7 @@ export function createControls(
       showRivers: riverViewInput.checked,
       showWaterDepth: waterDepthViewInput.checked,
       showMoisture: moistureViewInput.checked,
+      showTemperature: temperatureViewInput.checked,
       showVegetation: vegetationViewInput.checked,
     }),
   };

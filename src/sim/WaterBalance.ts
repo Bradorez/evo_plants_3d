@@ -4,6 +4,7 @@ import type { TerrainData } from "./Terrain";
 export interface WaterBalanceSettings {
   evaporationRate: number;
   shallowEvaporationBoost: number;
+  hotEvaporationSensitivity: number;
   edgeDrainRate: number;
   edgeDrainThreshold: number;
 }
@@ -28,6 +29,7 @@ export class WaterBalanceModel {
   public readonly settings: WaterBalanceSettings = {
     evaporationRate: 0.00016,
     shallowEvaporationBoost: 1.8,
+    hotEvaporationSensitivity: 0.9,
     edgeDrainRate: 0.055,
     edgeDrainThreshold: 0.0025,
   };
@@ -37,13 +39,14 @@ export class WaterBalanceModel {
   public step(
     terrain: TerrainData,
     waterDepth: Float32Array,
+    temperature: Float32Array,
     dtSeconds: number,
   ): WaterBalanceStepResult {
     if (!Number.isFinite(dtSeconds) || dtSeconds <= 0) {
       return { evaporatedWater: 0, drainedWater: 0 };
     }
 
-    const evaporatedWater = this.applyEvaporation(waterDepth, dtSeconds);
+    const evaporatedWater = this.applyEvaporation(waterDepth, temperature, dtSeconds);
     const drainedWater = this.applyBoundaryDrainage(terrain, waterDepth, dtSeconds);
 
     return { evaporatedWater, drainedWater };
@@ -54,7 +57,11 @@ export class WaterBalanceModel {
    * with a larger relative effect on shallow films so incidental flooding can
    * dry back out while larger lakes remain persistent.
    */
-  private applyEvaporation(waterDepth: Float32Array, dtSeconds: number): number {
+  private applyEvaporation(
+    waterDepth: Float32Array,
+    temperature: Float32Array,
+    dtSeconds: number,
+  ): number {
     let evaporatedWater = 0;
 
     for (let index = 0; index < waterDepth.length; index += 1) {
@@ -65,11 +72,14 @@ export class WaterBalanceModel {
       }
 
       const shallowFactor = clamp((0.025 - depth) / 0.025, 0, 1);
+      const heatFactor =
+        1 + (temperature[index] - 0.5) * this.settings.hotEvaporationSensitivity;
       const evaporationAmount = Math.min(
         depth,
         this.settings.evaporationRate *
           dtSeconds *
-          (1 + shallowFactor * this.settings.shallowEvaporationBoost),
+          (1 + shallowFactor * this.settings.shallowEvaporationBoost) *
+          clamp(heatFactor, 0.45, 1.8),
       );
 
       waterDepth[index] = Math.max(0, depth - evaporationAmount);

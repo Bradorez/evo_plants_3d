@@ -3,6 +3,7 @@ import { HydrologyModel } from "./Hydrology";
 import { MoistureModel } from "./Moisture";
 import type { PlantSpeciesDefinition } from "./PlantSpecies";
 import { RainfallModel } from "./Rainfall";
+import { TemperatureModel } from "./Temperature";
 import { recomputeTerrainBounds, TerrainData, TerrainGenerator } from "./Terrain";
 import { type VegetationDebugSummary, VegetationModel } from "./Vegetation";
 import { WaterBalanceModel } from "./WaterBalance";
@@ -67,6 +68,7 @@ export class Simulation {
   public terrain: TerrainData;
   public waterDepth: Float32Array;
   public readonly flowAccumulation: Float32Array;
+  public temperature: Float32Array;
   public soilMoisture: Float32Array;
   public persistentWetness: Float32Array;
   public floodProne: Float32Array;
@@ -82,6 +84,7 @@ export class Simulation {
   private hydrology: HydrologyModel;
   private erosion: ErosionModel;
   private moisture: MoistureModel;
+  private temperatureModel: TemperatureModel;
   private vegetation: VegetationModel;
   private readonly waterBalance: WaterBalanceModel;
   private elapsedTimeSeconds = 0;
@@ -99,7 +102,7 @@ export class Simulation {
   public constructor(options: SimulationOptions = {}) {
     this.resolution = options.resolution ?? 128;
     this.cellSize = options.cellSize ?? 1;
-    this.vegetationInitializationDelaySeconds = options.vegetationInitializationDelaySeconds ?? 10;
+    this.vegetationInitializationDelaySeconds = options.vegetationInitializationDelaySeconds ?? 50;
     this.schedule = {
       ...DEFAULT_SCHEDULE,
       ...options.schedule,
@@ -134,7 +137,9 @@ export class Simulation {
       this.hydrology.getFlowIntensity(),
     );
     this.moisture = new MoistureModel(this.terrain.grid.cellCount);
+    this.temperatureModel = new TemperatureModel(this.terrain);
     this.vegetation = new VegetationModel(this.terrain.grid.cellCount, this.terrain.seed);
+    this.temperature = this.temperatureModel.getTemperature();
     this.soilMoisture = this.moisture.getMoisture();
     this.persistentWetness = this.moisture.getPersistentWetness();
     this.floodProne = this.moisture.getFloodProne();
@@ -188,6 +193,7 @@ export class Simulation {
     this.vegetationAccumulator = 0;
     this.slowProcessAccumulator = 0;
     this.vegetationInitialized = false;
+    this.temperature = this.temperatureModel.getTemperature();
     this.syncVegetationState();
   }
 
@@ -229,9 +235,11 @@ export class Simulation {
       this.hydrology.getFlowIntensity(),
     );
     this.moisture = new MoistureModel(this.terrain.grid.cellCount);
+    this.temperatureModel = new TemperatureModel(this.terrain);
     this.vegetation = new VegetationModel(this.terrain.grid.cellCount, this.terrain.seed);
     this.waterDepth = this.hydrology.getWaterDepth();
     this.erosion.setWaterDepthBuffer(this.waterDepth);
+    this.temperature = this.temperatureModel.getTemperature();
     this.soilMoisture = this.moisture.getMoisture();
     this.persistentWetness = this.moisture.getPersistentWetness();
     this.floodProne = this.moisture.getFloodProne();
@@ -378,7 +386,7 @@ export class Simulation {
     this.rainfall.apply(this.waterDepth, stepSeconds);
     const hydrologyResult = this.hydrology.step(stepSeconds);
     this.waterDepth = this.hydrology.getWaterDepth();
-    this.waterBalance.step(this.terrain, this.waterDepth, stepSeconds);
+    this.waterBalance.step(this.terrain, this.waterDepth, this.temperature, stepSeconds);
     this.erosion.setWaterDepthBuffer(this.waterDepth);
     this.elapsedTimeSeconds += stepSeconds;
     this.peakFlow = Math.max(this.peakFlow, hydrologyResult.maxAccumulation);
@@ -404,6 +412,7 @@ export class Simulation {
       this.terrain,
       this.rainfall,
       this.waterDepth,
+      this.temperature,
       this.flowAccumulation,
       this.hydrology.getFlowIntensity(),
       stepSeconds,
@@ -428,6 +437,7 @@ export class Simulation {
     this.vegetation.step(
       this.terrain,
       this.soilMoisture,
+      this.temperature,
       this.persistentWetness,
       this.floodProne,
       this.waterDepth,
@@ -448,6 +458,7 @@ export class Simulation {
       this.rainfall.distribution,
       this.rainfall.getIntensity(),
       this.soilMoisture,
+      this.temperature,
       this.persistentWetness,
       this.floodProne,
     );

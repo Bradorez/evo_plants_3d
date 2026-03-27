@@ -32,6 +32,9 @@ export interface PlantEcologyTraits {
   floodTolerance: number;
   standingWaterTolerance: number;
   droughtTolerance: number;
+  optimalTemperature: number;
+  temperatureTolerance: number;
+  heatStressResistance: number;
   slopeTolerance: number;
   spreadAbility: number;
   vigor: number;
@@ -80,6 +83,7 @@ export interface PlantSpeciesDefinition {
 
 export interface HabitatPressureProfile {
   moisture: number;
+  temperature: number;
   persistentWetness: number;
   floodProne: number;
   standingWater: number;
@@ -89,6 +93,7 @@ export interface HabitatPressureProfile {
   fertileMoisture: number;
   channelInfluence: number;
   lowland: number;
+  heatStress: number;
 }
 
 export interface PlantRenderParameters {
@@ -264,6 +269,7 @@ export function mutateSpecies(
 
 export function buildHabitatPressureProfile(
   moisture: number,
+  temperature: number,
   persistentWetness: number,
   floodProne: number,
   standingWater: number,
@@ -284,9 +290,15 @@ export function buildHabitatPressureProfile(
     1,
   );
   const lowland = clamp((1 - normalizedElevation) * 0.68 + persistentWetness * 0.18 + wetAdjacency * 0.14, 0, 1);
+  const heatStress = clamp(
+    temperature * 0.7 + (1 - moisture) * 0.2 + slope * 0.1,
+    0,
+    1,
+  );
 
   return {
     moisture,
+    temperature,
     persistentWetness,
     floodProne,
     standingWater,
@@ -296,6 +308,7 @@ export function buildHabitatPressureProfile(
     fertileMoisture,
     channelInfluence,
     lowland,
+    heatStress,
   };
 }
 
@@ -806,6 +819,9 @@ function createTemplates(): SpeciesTemplate[] {
         floodTolerance: 0.22,
         standingWaterTolerance: 0.06,
         droughtTolerance: 0.78,
+        optimalTemperature: 0.68,
+        temperatureTolerance: 0.26,
+        heatStressResistance: 0.72,
         slopeTolerance: 0.78,
         spreadAbility: 0.72,
         vigor: 0.68,
@@ -849,6 +865,9 @@ function createTemplates(): SpeciesTemplate[] {
         floodTolerance: 0.32,
         standingWaterTolerance: 0.08,
         droughtTolerance: 0.36,
+        optimalTemperature: 0.58,
+        temperatureTolerance: 0.22,
+        heatStressResistance: 0.42,
         slopeTolerance: 0.54,
         spreadAbility: 0.56,
         vigor: 0.58,
@@ -892,6 +911,9 @@ function createTemplates(): SpeciesTemplate[] {
         floodTolerance: 0.24,
         standingWaterTolerance: 0.06,
         droughtTolerance: 0.54,
+        optimalTemperature: 0.56,
+        temperatureTolerance: 0.2,
+        heatStressResistance: 0.5,
         slopeTolerance: 0.56,
         spreadAbility: 0.42,
         vigor: 0.64,
@@ -935,6 +957,9 @@ function createTemplates(): SpeciesTemplate[] {
         floodTolerance: 0.2,
         standingWaterTolerance: 0.05,
         droughtTolerance: 0.42,
+        optimalTemperature: 0.5,
+        temperatureTolerance: 0.18,
+        heatStressResistance: 0.38,
         slopeTolerance: 0.5,
         spreadAbility: 0.3,
         vigor: 0.62,
@@ -978,6 +1003,9 @@ function createTemplates(): SpeciesTemplate[] {
         floodTolerance: 0.12,
         standingWaterTolerance: 0.04,
         droughtTolerance: 0.64,
+        optimalTemperature: 0.42,
+        temperatureTolerance: 0.22,
+        heatStressResistance: 0.54,
         slopeTolerance: 0.68,
         spreadAbility: 0.28,
         vigor: 0.56,
@@ -1021,6 +1049,9 @@ function createTemplates(): SpeciesTemplate[] {
         floodTolerance: 0.36,
         standingWaterTolerance: 0.12,
         droughtTolerance: 0.34,
+        optimalTemperature: 0.72,
+        temperatureTolerance: 0.16,
+        heatStressResistance: 0.48,
         slopeTolerance: 0.34,
         spreadAbility: 0.22,
         vigor: 0.52,
@@ -1064,6 +1095,9 @@ function createTemplates(): SpeciesTemplate[] {
         floodTolerance: 0.84,
         standingWaterTolerance: 0.44,
         droughtTolerance: 0.12,
+        optimalTemperature: 0.64,
+        temperatureTolerance: 0.24,
+        heatStressResistance: 0.62,
         slopeTolerance: 0.38,
         spreadAbility: 0.64,
         vigor: 0.54,
@@ -1121,6 +1155,13 @@ function mutateEcology(
       1,
     ),
     droughtTolerance: clamp(source.droughtTolerance + signedJitter(random, strength), 0, 1),
+    optimalTemperature: clamp(source.optimalTemperature + signedJitter(random, strength), 0, 1),
+    temperatureTolerance: clamp(
+      source.temperatureTolerance + signedJitter(random, strength * 0.8),
+      0.08,
+      0.48,
+    ),
+    heatStressResistance: clamp(source.heatStressResistance + signedJitter(random, strength), 0, 1),
     slopeTolerance: clamp(source.slopeTolerance + signedJitter(random, strength * 0.75), 0.1, 1),
     spreadAbility: clamp(source.spreadAbility + signedJitter(random, strength), 0.08, 1),
     vigor: clamp(source.vigor + signedJitter(random, strength), 0.1, 1),
@@ -1135,6 +1176,13 @@ function mutateEcology(
   ecology.floodTolerance = lerp(ecology.floodTolerance, habitat.channelInfluence, 0.2);
   ecology.standingWaterTolerance = lerp(ecology.standingWaterTolerance, habitat.standingWater, 0.18);
   ecology.droughtTolerance = lerp(ecology.droughtTolerance, habitat.dryness, 0.18);
+  ecology.optimalTemperature = lerp(ecology.optimalTemperature, habitat.temperature, 0.18);
+  ecology.temperatureTolerance = lerp(
+    ecology.temperatureTolerance,
+    0.16 + habitat.lowland * 0.08 + habitat.heatStress * 0.16,
+    0.12,
+  );
+  ecology.heatStressResistance = lerp(ecology.heatStressResistance, habitat.heatStress, 0.16);
   ecology.slopeTolerance = lerp(ecology.slopeTolerance, habitat.slope * 0.8 + 0.2, 0.14);
   ecology.vigor = lerp(ecology.vigor, habitat.fertileMoisture * 0.6 + habitat.stability * 0.4, 0.12);
   return ecology;

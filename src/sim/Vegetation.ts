@@ -192,6 +192,7 @@ export class VegetationModel {
       phenotypeCounts[label] = (phenotypeCounts[label] ?? 0) + 1;
       const habitat = buildHabitatPressureProfile(
         species.ecology.moisturePreference,
+        species.ecology.optimalTemperature,
         species.ecology.persistentWetnessPreference,
         species.ecology.floodTolerance,
         species.ecology.standingWaterTolerance,
@@ -274,6 +275,7 @@ export class VegetationModel {
     rainfallDistribution: Float32Array,
     rainIntensity: number,
     soilMoisture: Float32Array,
+    temperature: Float32Array,
     persistentWetness: Float32Array,
     floodProne: Float32Array,
   ): void {
@@ -300,6 +302,7 @@ export class VegetationModel {
         );
         const seededHabitat = buildHabitatPressureProfile(
           seededMoisture,
+          temperature[index],
           seededWetness,
           floodProne[index],
           0,
@@ -310,6 +313,7 @@ export class VegetationModel {
         const selection = this.pickBestSpecies(
           seededHabitat,
           seededMoisture,
+          temperature[index],
           seededWetness,
           floodProne[index],
           0,
@@ -365,6 +369,7 @@ export class VegetationModel {
   public step(
     terrain: TerrainData,
     soilMoisture: Float32Array,
+    temperature: Float32Array,
     persistentWetness: Float32Array,
     floodProne: Float32Array,
     waterDepth: Float32Array,
@@ -390,6 +395,7 @@ export class VegetationModel {
         const wetAdjacency = this.nearbyWetness[index];
         const habitat = buildHabitatPressureProfile(
           moisture,
+          temperature[index],
           wetness,
           flood,
           standingWater,
@@ -401,6 +407,7 @@ export class VegetationModel {
         const environmentCandidate = this.pickBestSpecies(
           habitat,
           moisture,
+          temperature[index],
           wetness,
           flood,
           standingWater,
@@ -416,6 +423,7 @@ export class VegetationModel {
               currentSpecies,
               habitat,
               moisture,
+              temperature[index],
               wetness,
               flood,
               standingWater,
@@ -647,6 +655,7 @@ export class VegetationModel {
   private pickBestSpecies(
     habitat: HabitatPressureProfile,
     moisture: number,
+    temperature: number,
     persistentWetness: number,
     floodProne: number,
     standingWater: number,
@@ -661,6 +670,7 @@ export class VegetationModel {
         species,
         habitat,
         moisture,
+        temperature,
         persistentWetness,
         floodProne,
         standingWater,
@@ -681,6 +691,7 @@ export class VegetationModel {
     species: PlantSpeciesDefinition,
     habitat: HabitatPressureProfile,
     moisture: number,
+    temperature: number,
     persistentWetness: number,
     floodProne: number,
     standingWater: number,
@@ -698,8 +709,19 @@ export class VegetationModel {
       ecology.persistentWetnessPreference,
       Math.max(ecology.moistureTolerance * 0.9, 0.12),
     );
+    const temperatureFit = this.preferenceFit(
+      temperature,
+      ecology.optimalTemperature,
+      ecology.temperatureTolerance,
+    );
     const droughtPenalty = clamp(
       (ecology.droughtTolerance - moisture) / Math.max(ecology.droughtTolerance, 0.12),
+      0,
+      1,
+    );
+    const temperaturePenalty = clamp(
+      Math.abs(temperature - ecology.optimalTemperature) /
+        Math.max(ecology.temperatureTolerance, 0.08),
       0,
       1,
     );
@@ -749,6 +771,7 @@ export class VegetationModel {
 
     return clamp(
       moistureFit * 0.36 +
+        temperatureFit * 0.16 +
         wetnessFit * 0.24 +
         ecology.vigor * 0.16 +
         (1 - slopePenalty) * 0.12 +
@@ -758,6 +781,7 @@ export class VegetationModel {
         elevationBias -
         maintenancePenalty -
         droughtPenalty * 0.18 * droughtAmplification -
+        temperaturePenalty * 0.14 * (1 - ecology.heatStressResistance * 0.55) -
         floodPenalty * 0.24 * floodAmplification -
         standingWaterPenalty * 0.2 * floodAmplification -
         slopePenalty * 0.1 * slopeAmplification,
@@ -931,7 +955,11 @@ export class VegetationModel {
       1 +
       morphologyEffects.droughtBurden * this.settings.morphologyDroughtStrength * (0.72 + habitat.dryness * 0.48) -
       morphologyEffects.spreadDrive * 0.06;
-    return drynessDeficit * droughtBuffer * morphologyAmplification;
+    const heatAmplification =
+      1 +
+      habitat.heatStress *
+        (0.2 + (1 - species.ecology.heatStressResistance) * 0.5);
+    return drynessDeficit * droughtBuffer * morphologyAmplification * heatAmplification;
   }
 
   private computeFloodStress(

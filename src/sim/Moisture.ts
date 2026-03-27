@@ -8,6 +8,7 @@ export interface MoistureSettings {
   nearbyWaterInfluence: number;
   channelMoistureInfluence: number;
   dryingRate: number;
+  hotDryingSensitivity: number;
   drainageRate: number;
   moistureSmoothingStrength: number;
   persistentWetnessRise: number;
@@ -29,6 +30,7 @@ export class MoistureModel {
     nearbyWaterInfluence: 0.18,
     channelMoistureInfluence: 0.08,
     dryingRate: 0.018,
+    hotDryingSensitivity: 0.9,
     drainageRate: 0.022,
     moistureSmoothingStrength: 0.22,
     persistentWetnessRise: 0.2,
@@ -84,6 +86,7 @@ export class MoistureModel {
     terrain: TerrainData,
     rainfall: RainfallModel,
     waterDepth: Float32Array,
+    temperature: Float32Array,
     flowAccumulation: Float32Array,
     flowIntensity: Float32Array,
     dtSeconds: number,
@@ -135,8 +138,17 @@ export class MoistureModel {
         const source = rainfallInput + waterInput + nearbyWaterInput + channelInput;
 
         const dryExposure = clamp(1 - nearbyWater * 0.7 - localWater * 0.9, 0.12, 1);
+        const heatDryingMultiplier = clamp(
+          1 + (temperature[index] - 0.5) * this.settings.hotDryingSensitivity,
+          0.55,
+          1.9,
+        );
         const dryingLoss =
-          this.settings.dryingRate * dryExposure * (0.35 + slope * 0.65) * dtSeconds;
+          this.settings.dryingRate *
+          dryExposure *
+          heatDryingMultiplier *
+          (0.35 + slope * 0.65) *
+          dtSeconds;
         const drainageLoss =
           this.settings.drainageRate * (slope * 0.75 + (1 - retention) * 0.25) * dtSeconds;
         const nextMoisture = clamp(

@@ -26,6 +26,7 @@ class TerrainHydrologyApp {
     showRivers: true,
     showWaterDepth: true,
     showMoisture: false,
+    showTemperature: false,
     showVegetation: false,
   };
 
@@ -109,11 +110,13 @@ class TerrainHydrologyApp {
       this.simulation.soilMoisture,
       this.simulation.persistentWetness,
       this.simulation.floodProne,
+      this.simulation.temperature,
       this.simulation.vegetationBiomass,
       this.simulation.vegetationDensity,
       this.simulation.vegetationProfile,
       simulatedDeltaSeconds,
       this.viewOptions.showMoisture,
+      this.viewOptions.showTemperature,
       this.viewOptions.showVegetation,
     );
 

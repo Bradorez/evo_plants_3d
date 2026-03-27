@@ -334,11 +334,13 @@ export class TerrainMeshRenderer {
     soilMoisture: Float32Array,
     persistentWetness: Float32Array,
     floodProne: Float32Array,
+    temperature: Float32Array,
     vegetationBiomass: Float32Array,
     vegetationDensity: Uint8Array,
     vegetationProfile: Uint8Array,
     dtSeconds: number,
     showMoisture: boolean,
+    showTemperature: boolean,
     showVegetation: boolean,
   ): void {
     if (
@@ -349,6 +351,7 @@ export class TerrainMeshRenderer {
       soilMoisture.length !== this.topVertexCount ||
       persistentWetness.length !== this.topVertexCount ||
       floodProne.length !== this.topVertexCount ||
+      temperature.length !== this.topVertexCount ||
       vegetationBiomass.length !== this.topVertexCount ||
       vegetationDensity.length !== this.topVertexCount ||
       vegetationProfile.length !== this.topVertexCount
@@ -417,6 +420,7 @@ export class TerrainMeshRenderer {
       const vegetation = vegetationBiomass[index];
       const vegetationClass = vegetationDensity[index];
       const plantProfile = vegetationProfile[index];
+      const heat = temperature[index];
       const wetness = clamp(
         nearbyWater * 0.55 +
           water * 0.45 +
@@ -452,6 +456,14 @@ export class TerrainMeshRenderer {
             plantProfile,
             ecologicalMoisture,
             floodMemory,
+            water,
+          )
+        : showTemperature
+          ? this.getTemperatureVisualizationColor(
+            this.elevationField[index],
+            slope,
+            heat,
+            ecologicalMoisture,
             water,
           )
         : showMoisture
@@ -854,6 +866,48 @@ export class TerrainMeshRenderer {
 
     const elevationLift = clamp(0.92 + elevation * 0.08, 0.9, 1);
     const shade = 1 - slope * 0.12;
+    return [r * elevationLift * shade, g * elevationLift * shade, b * elevationLift * shade];
+  }
+
+  /**
+   * Temperature view reveals the environmental heat field that now affects
+   * evaporation, soil drying, and plant stress. Cooler terrain stays blue-grey,
+   * temperate zones move through olive, and hot exposed cells shift toward
+   * orange-red, with wet ground muting some of the heat signature.
+   */
+  private getTemperatureVisualizationColor(
+    elevation: number,
+    slope: number,
+    temperature: number,
+    ecologicalMoisture: number,
+    surfaceWater: number,
+  ): [number, number, number] {
+    const cold = [0.16, 0.28, 0.46] as const;
+    const mild = [0.46, 0.44, 0.22] as const;
+    const hot = [0.72, 0.34, 0.14] as const;
+    const scorching = [0.84, 0.2, 0.1] as const;
+
+    let r = lerp(cold[0], mild[0], clamp(temperature * 1.2, 0, 1));
+    let g = lerp(cold[1], mild[1], clamp(temperature * 1.2, 0, 1));
+    let b = lerp(cold[2], mild[2], clamp(temperature * 1.2, 0, 1));
+
+    const hotBlend = clamp((temperature - 0.45) / 0.4, 0, 1);
+    r = lerp(r, hot[0], hotBlend);
+    g = lerp(g, hot[1], hotBlend);
+    b = lerp(b, hot[2], hotBlend);
+
+    const scorchBlend = clamp((temperature - 0.72) / 0.2, 0, 1);
+    r = lerp(r, scorching[0], scorchBlend);
+    g = lerp(g, scorching[1], scorchBlend);
+    b = lerp(b, scorching[2], scorchBlend);
+
+    const moistureCooling = clamp(ecologicalMoisture * 0.2 + surfaceWater * 0.28, 0, 0.32);
+    r = lerp(r, cold[0], moistureCooling * 0.45);
+    g = lerp(g, cold[1], moistureCooling * 0.6);
+    b = lerp(b, cold[2], moistureCooling);
+
+    const elevationLift = clamp(0.92 + elevation * 0.08, 0.9, 1);
+    const shade = 1 - slope * 0.08;
     return [r * elevationLift * shade, g * elevationLift * shade, b * elevationLift * shade];
   }
 }
