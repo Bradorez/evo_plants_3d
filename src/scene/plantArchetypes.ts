@@ -264,7 +264,7 @@ function buildReed(parts: Mesh[], scene: Scene, render: ReturnType<typeof derive
     // Reeds should read as a looser stand, not a tight bouquet. Spreading the
     // stems farther inside each clump makes adjacent reed cells blend together
     // more naturally across the marsh.
-    const radius = 0.15 + (index % 2) * 0.08 + Math.floor(index / 2) * 0.035;
+    const radius = 0.4 + (index % 2) * 0.22 + Math.floor(index / 2) * 0.11;
     const stemHeight = render.heightScale * (0.72 + (index % 3) * 0.08);
     const stem = MeshBuilder.CreateCylinder(`reed-stem-${index}`, {
       height: stemHeight,

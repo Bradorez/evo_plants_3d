@@ -277,6 +277,7 @@ export class VegetationModel {
           normalizedElevation,
         );
         const seedNoise = valueNoise2D(x * 0.18 + 11.7, y * 0.18 - 6.4, this.seed + 9011);
+        const occupancyNoise = valueNoise2D(x * 0.31 - 17.4, y * 0.31 + 9.8, this.seed + 27191);
         const terrainSupport = clamp(
           (1 - slope) * 0.55 + basinFactor * 0.25 + (1 - normalizedElevation) * 0.2,
           0,
@@ -284,7 +285,12 @@ export class VegetationModel {
         );
         const establishment = selection.score * 0.68 + terrainSupport * 0.22 + seedNoise * 0.1;
 
-        if (selection.speciesId === SPECIES_NONE || selection.score < 0.22 || establishment < 0.31) {
+        if (
+          selection.speciesId === SPECIES_NONE ||
+          selection.score < 0.22 ||
+          establishment < 0.31 ||
+          occupancyNoise < 0.5
+        ) {
           continue;
         }
 
