@@ -3,6 +3,7 @@ import { HydrologyModel } from "./Hydrology";
 import { MoistureModel } from "./Moisture";
 import type { PlantSpeciesDefinition } from "./PlantSpecies";
 import { RainfallModel } from "./Rainfall";
+import { SeasonModel, type SeasonState } from "./Season";
 import { TemperatureModel } from "./Temperature";
 import { recomputeTerrainBounds, TerrainData, TerrainGenerator } from "./Terrain";
 import { type VegetationDebugSummary, VegetationModel } from "./Vegetation";
@@ -37,6 +38,11 @@ export interface SimulationStats {
   totalWater: number;
   peakFlow: number;
   rainIntensity: number;
+  seasonLabel: string;
+  seasonPhase: number;
+  rainfallMultiplier: number;
+  temperatureOffset: number;
+  evaporationMultiplier: number;
 }
 
 const DEFAULT_SCHEDULE: SimulationSchedule = {
@@ -84,6 +90,7 @@ export class Simulation {
   private hydrology: HydrologyModel;
   private erosion: ErosionModel;
   private moisture: MoistureModel;
+  private readonly seasonModel: SeasonModel;
   private temperatureModel: TemperatureModel;
   private vegetation: VegetationModel;
   private readonly waterBalance: WaterBalanceModel;
@@ -98,6 +105,7 @@ export class Simulation {
   private readonly cellSize: number;
   private readonly vegetationInitializationDelaySeconds: number;
   private vegetationInitialized = false;
+  private seasonState: SeasonState;
 
   public constructor(options: SimulationOptions = {}) {
     this.resolution = options.resolution ?? 128;
@@ -129,6 +137,7 @@ export class Simulation {
       this.flowAccumulation,
     );
     this.waterBalance = new WaterBalanceModel();
+    this.seasonModel = new SeasonModel();
     this.erosion = new ErosionModel(
       this.terrain.grid,
       this.terrain.heights,
@@ -141,6 +150,8 @@ export class Simulation {
     );
     this.moisture = new MoistureModel(this.terrain.grid.cellCount);
     this.temperatureModel = new TemperatureModel(this.terrain);
+    this.seasonState = this.seasonModel.getState();
+    this.temperatureModel.applySeasonalOffset(this.seasonState.temperatureOffset);
     this.vegetation = new VegetationModel(this.terrain.grid.cellCount, this.terrain.seed);
     this.temperature = this.temperatureModel.getTemperature();
     this.soilMoisture = this.moisture.getMoisture();
@@ -196,6 +207,9 @@ export class Simulation {
     this.vegetationAccumulator = 0;
     this.slowProcessAccumulator = 0;
     this.vegetationInitialized = false;
+    this.seasonModel.reset();
+    this.seasonState = this.seasonModel.getState();
+    this.temperatureModel.applySeasonalOffset(this.seasonState.temperatureOffset);
     this.temperature = this.temperatureModel.getTemperature();
     this.syncVegetationState();
   }
@@ -216,6 +230,7 @@ export class Simulation {
     this.ecologyAccumulator = 0;
     this.vegetationAccumulator = 0;
     this.slowProcessAccumulator = 0;
+    this.seasonModel.reset();
 
     const nextRainfall = new RainfallModel(
       this.terrain.grid,
@@ -242,6 +257,8 @@ export class Simulation {
     );
     this.moisture = new MoistureModel(this.terrain.grid.cellCount);
     this.temperatureModel = new TemperatureModel(this.terrain);
+    this.seasonState = this.seasonModel.getState();
+    this.temperatureModel.applySeasonalOffset(this.seasonState.temperatureOffset);
     this.vegetation = new VegetationModel(this.terrain.grid.cellCount, this.terrain.seed);
     this.waterDepth = this.hydrology.getWaterDepth();
     this.erosion.setWaterDepthBuffer(this.waterDepth);
@@ -297,7 +314,19 @@ export class Simulation {
       totalWater,
       peakFlow,
       rainIntensity: this.rainfall.getIntensity(),
+      seasonLabel: this.seasonState.seasonLabel,
+      seasonPhase: this.seasonState.phase,
+      rainfallMultiplier: this.seasonState.rainfallMultiplier,
+      temperatureOffset: this.seasonState.temperatureOffset,
+      evaporationMultiplier: this.seasonState.evaporationMultiplier,
     };
+  }
+
+  private advanceSeason(dtSeconds: number): void {
+    this.seasonModel.step(dtSeconds);
+    this.seasonState = this.seasonModel.getState();
+    this.temperatureModel.applySeasonalOffset(this.seasonState.temperatureOffset);
+    this.temperature = this.temperatureModel.getTemperature();
   }
 
   private runHydrologyCadence(): void {
@@ -401,10 +430,17 @@ export class Simulation {
   }
 
   private runHydrologyStep(stepSeconds: number): void {
-    this.rainfall.apply(this.waterDepth, stepSeconds);
+    this.advanceSeason(stepSeconds);
+    this.rainfall.apply(this.waterDepth, stepSeconds, this.seasonState.rainfallMultiplier);
     const hydrologyResult = this.hydrology.step(stepSeconds);
     this.waterDepth = this.hydrology.getWaterDepth();
-    this.waterBalance.step(this.terrain, this.waterDepth, this.temperature, stepSeconds);
+    this.waterBalance.step(
+      this.terrain,
+      this.waterDepth,
+      this.temperature,
+      this.seasonState.evaporationMultiplier,
+      stepSeconds,
+    );
     this.erosion.setWaterDepthBuffer(this.waterDepth);
     this.elapsedTimeSeconds += stepSeconds;
     this.peakFlow = Math.max(this.peakFlow, hydrologyResult.maxAccumulation);
@@ -433,6 +469,8 @@ export class Simulation {
       this.temperature,
       this.flowAccumulation,
       this.hydrology.getFlowIntensity(),
+      this.seasonState.rainfallMultiplier,
+      this.seasonState.soilDryingMultiplier,
       stepSeconds,
     );
     this.soilMoisture = this.moisture.getMoisture();
@@ -459,6 +497,8 @@ export class Simulation {
       this.persistentWetness,
       this.floodProne,
       this.waterDepth,
+      this.seasonState.plantGrowthMultiplier,
+      this.seasonState.plantStressMultiplier,
       stepSeconds,
     );
     this.vegetationBiomass = this.vegetation.getBiomass();

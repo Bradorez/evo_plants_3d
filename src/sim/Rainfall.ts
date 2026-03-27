@@ -38,15 +38,20 @@ export class RainfallModel {
     return this.intensity;
   }
 
-  public apply(waterDepth: Float32Array, dtSeconds: number): number {
-    if (this.intensity <= 0 || dtSeconds <= 0) {
+  public apply(
+    waterDepth: Float32Array,
+    dtSeconds: number,
+    intensityMultiplier = 1,
+  ): number {
+    if (this.intensity <= 0 || dtSeconds <= 0 || intensityMultiplier <= 0) {
       return 0;
     }
 
     let addedWater = 0;
+    const effectiveIntensity = this.intensity * intensityMultiplier;
 
     for (let index = 0; index < waterDepth.length; index += 1) {
-      const amount = this.intensity * this.distribution[index] * dtSeconds * 0.02;
+      const amount = effectiveIntensity * this.distribution[index] * dtSeconds * 0.02;
       waterDepth[index] += amount;
       addedWater += amount;
     }

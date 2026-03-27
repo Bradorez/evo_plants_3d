@@ -50,6 +50,10 @@ export function createControls(
   const timeValue = queryElement<HTMLElement>("timeValue");
   const waterValue = queryElement<HTMLElement>("waterValue");
   const peakFlowValue = queryElement<HTMLElement>("peakFlowValue");
+  const seasonValue = queryElement<HTMLElement>("seasonValue");
+  const seasonRainValue = queryElement<HTMLElement>("seasonRainValue");
+  const seasonTempValue = queryElement<HTMLElement>("seasonTempValue");
+  const seasonEvapValue = queryElement<HTMLElement>("seasonEvapValue");
   const plantSpeciesValue = queryElement<HTMLElement>("plantSpeciesValue");
   const activePlantSpeciesValue = queryElement<HTMLElement>("activePlantSpeciesValue");
   const livingPlantCellsValue = queryElement<HTMLElement>("livingPlantCellsValue");
@@ -139,6 +143,10 @@ export function createControls(
       timeValue.textContent = `${stats.elapsedTimeSeconds.toFixed(1)} s`;
       waterValue.textContent = stats.totalWater.toFixed(3);
       peakFlowValue.textContent = stats.peakFlow.toFixed(3);
+      seasonValue.textContent = stats.seasonLabel;
+      seasonRainValue.textContent = `${stats.rainfallMultiplier.toFixed(2)}x`;
+      seasonTempValue.textContent = `${stats.temperatureOffset >= 0 ? "+" : ""}${stats.temperatureOffset.toFixed(2)}`;
+      seasonEvapValue.textContent = `${stats.evaporationMultiplier.toFixed(2)}x`;
     },
     setVegetationDebug: (summary: VegetationDebugSummary) => {
       const entries = Object.entries(summary.phenotypeCounts).sort((left, right) => right[1] - left[1]);

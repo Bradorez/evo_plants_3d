@@ -23,15 +23,23 @@ export class TemperatureModel {
     noiseStrength: 0.06,
   };
 
+  private readonly baseTemperature = new Float32Array();
   private readonly temperature = new Float32Array();
 
   public constructor(terrain: TerrainData) {
+    this.baseTemperature = new Float32Array(terrain.grid.cellCount);
     this.temperature = new Float32Array(terrain.grid.cellCount);
     this.rebuild(terrain);
   }
 
   public getTemperature(): Float32Array {
     return this.temperature;
+  }
+
+  public applySeasonalOffset(offset: number): void {
+    for (let index = 0; index < this.temperature.length; index += 1) {
+      this.temperature[index] = clamp(this.baseTemperature[index] + offset, 0, 1);
+    }
   }
 
   public rebuild(terrain: TerrainData): void {
@@ -52,8 +60,10 @@ export class TemperatureModel {
           elevation * this.settings.elevationCoolingStrength +
           (noise - 0.5) * this.settings.noiseStrength;
 
-        this.temperature[index] = clamp(temperature, 0, 1);
+        this.baseTemperature[index] = clamp(temperature, 0, 1);
       }
     }
+
+    this.applySeasonalOffset(0);
   }
 }

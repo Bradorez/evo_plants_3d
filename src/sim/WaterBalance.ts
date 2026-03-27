@@ -40,13 +40,19 @@ export class WaterBalanceModel {
     terrain: TerrainData,
     waterDepth: Float32Array,
     temperature: Float32Array,
+    evaporationMultiplier: number,
     dtSeconds: number,
   ): WaterBalanceStepResult {
     if (!Number.isFinite(dtSeconds) || dtSeconds <= 0) {
       return { evaporatedWater: 0, drainedWater: 0 };
     }
 
-    const evaporatedWater = this.applyEvaporation(waterDepth, temperature, dtSeconds);
+    const evaporatedWater = this.applyEvaporation(
+      waterDepth,
+      temperature,
+      evaporationMultiplier,
+      dtSeconds,
+    );
     const drainedWater = this.applyBoundaryDrainage(terrain, waterDepth, dtSeconds);
 
     return { evaporatedWater, drainedWater };
@@ -60,9 +66,11 @@ export class WaterBalanceModel {
   private applyEvaporation(
     waterDepth: Float32Array,
     temperature: Float32Array,
+    evaporationMultiplier: number,
     dtSeconds: number,
   ): number {
     let evaporatedWater = 0;
+    const seasonalMultiplier = clamp(evaporationMultiplier, 0.45, 2.2);
 
     for (let index = 0; index < waterDepth.length; index += 1) {
       const depth = waterDepth[index];
@@ -79,7 +87,8 @@ export class WaterBalanceModel {
         this.settings.evaporationRate *
           dtSeconds *
           (1 + shallowFactor * this.settings.shallowEvaporationBoost) *
-          clamp(heatFactor, 0.45, 1.8),
+          clamp(heatFactor, 0.45, 1.8) *
+          seasonalMultiplier,
       );
 
       waterDepth[index] = Math.max(0, depth - evaporationAmount);

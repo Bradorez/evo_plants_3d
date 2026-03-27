@@ -89,6 +89,8 @@ export class MoistureModel {
     temperature: Float32Array,
     flowAccumulation: Float32Array,
     flowIntensity: Float32Array,
+    rainfallMultiplier: number,
+    soilDryingMultiplier: number,
     dtSeconds: number,
   ): void {
     if (!Number.isFinite(dtSeconds) || dtSeconds <= 0) {
@@ -122,6 +124,7 @@ export class MoistureModel {
         const retention = clamp(0.34 + basinFactor * 0.48 + (1 - slope) * 0.18, 0.2, 1);
         const rainfallInput =
           rainfall.getIntensity() *
+          clamp(rainfallMultiplier, 0.15, 2.25) *
           rainfall.distribution[index] *
           this.settings.rainfallToMoisture *
           retention *
@@ -147,6 +150,7 @@ export class MoistureModel {
           this.settings.dryingRate *
           dryExposure *
           heatDryingMultiplier *
+          clamp(soilDryingMultiplier, 0.5, 2) *
           (0.35 + slope * 0.65) *
           dtSeconds;
         const drainageLoss =

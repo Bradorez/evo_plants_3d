@@ -1,4 +1,4 @@
-import { clamp } from "../utils/math";
+import { clamp, lerp } from "../utils/math";
 import { valueNoise2D } from "../utils/noise";
 import type { TerrainData } from "./Terrain";
 import {
@@ -373,6 +373,8 @@ export class VegetationModel {
     persistentWetness: Float32Array,
     floodProne: Float32Array,
     waterDepth: Float32Array,
+    seasonalGrowthMultiplier: number,
+    seasonalStressMultiplier: number,
     dtSeconds: number,
   ): void {
     if (!Number.isFinite(dtSeconds) || dtSeconds <= 0) {
@@ -380,6 +382,8 @@ export class VegetationModel {
     }
 
     this.vegetationStepCounter += 1;
+    const growthMultiplier = clamp(seasonalGrowthMultiplier, 0.6, 1.5);
+    const stressMultiplier = clamp(seasonalStressMultiplier, 0.7, 1.8);
     this.updateNeighborhoodSignals(terrain, soilMoisture, persistentWetness);
 
     for (let y = 0; y < terrain.grid.height; y += 1) {
@@ -513,14 +517,15 @@ export class VegetationModel {
             (0.32 + support * 0.68) *
             (0.74 + morphologyPerformance * 0.16 + competitionAdvantage * 0.1) *
             (1 - maintenancePressure * 0.42) *
+            growthMultiplier *
             this.resolveVigor(activeStressSpeciesId) *
             dtSeconds;
           nextBiomass -=
             (declinePressure * this.settings.declineRate +
               maintenancePressure +
-              droughtStress * this.settings.droughtStressStrength +
-              floodStress * this.settings.floodStressStrength +
-              slopeStress * this.settings.slopeStressStrength +
+              droughtStress * this.settings.droughtStressStrength * stressMultiplier +
+              floodStress * this.settings.floodStressStrength * stressMultiplier +
+              slopeStress * this.settings.slopeStressStrength * lerp(stressMultiplier, 1, 0.5) +
               standingWaterStress * 0.16) *
             dtSeconds;
         } else {
@@ -551,6 +556,7 @@ export class VegetationModel {
               this.settings.spreadRate *
               spreadAbility *
               spreadDrive *
+              growthMultiplier *
               (0.58 + vigor * 0.42) *
               dtSeconds;
 
