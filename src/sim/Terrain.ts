@@ -1,4 +1,4 @@
-import { clamp, inverseLerp } from "../utils/math";
+import { clamp, inverseLerp, lerp } from "../utils/math";
 import { fbm2D, ridgeNoise2D, valueNoise2D } from "../utils/noise";
 import { Grid } from "./Grid";
 
@@ -7,6 +7,9 @@ export interface TerrainData {
   grid: Grid;
   cellSize: number;
   heights: Float32Array;
+  bedrockHeights: Float32Array;
+  soilDepth: Float32Array;
+  coarseRock: Float32Array;
   minHeight: number;
   maxHeight: number;
 }
@@ -16,6 +19,13 @@ export interface TerrainOptions {
   cellSize: number;
   seed: number;
 }
+
+export const TERRAIN_MATERIAL_SETTINGS = {
+  initialSoilDepthMin: 0.25,
+  initialSoilDepthMax: 1.8,
+  initialRockinessMin: 0.05,
+  initialRockinessMax: 0.95,
+} as const;
 
 /**
  * Terrain bounds are used by the renderer for elevation-dependent coloring and
@@ -45,6 +55,9 @@ export class TerrainGenerator {
   public static generate(options: TerrainOptions): TerrainData {
     const grid = new Grid(options.resolution, options.resolution);
     const heights = new Float32Array(grid.cellCount);
+    const bedrockHeights = new Float32Array(grid.cellCount);
+    const soilDepth = new Float32Array(grid.cellCount);
+    const coarseRock = new Float32Array(grid.cellCount);
     const featureSeed = options.seed >>> 0;
     const invWidth = 1 / Math.max(grid.width - 1, 1);
     const invHeight = 1 / Math.max(grid.height - 1, 1);
@@ -92,15 +105,54 @@ export class TerrainGenerator {
       heights[index] = scaled;
     }
 
+    for (let y = 0; y < grid.height; y += 1) {
+      for (let x = 0; x < grid.width; x += 1) {
+        const index = grid.index(x, y);
+        const normalizedElevation = inverseLerp(0, 24, heights[index]);
+        const slope = sampleSlope(grid, heights, x, y);
+        const soilNoise = valueNoise2D(x * 0.09 + 4.8, y * 0.09 - 11.2, featureSeed + 1207);
+        const rockNoise = valueNoise2D(x * 0.13 - 7.4, y * 0.13 + 6.1, featureSeed + 8129);
+        const valleyRetention = clamp((1 - slope) * 0.55 + (1 - normalizedElevation) * 0.28 + soilNoise * 0.17, 0, 1);
+        const rockyExposure = clamp(slope * 0.48 + normalizedElevation * 0.22 + rockNoise * 0.3, 0, 1);
+        const cellSoilDepth = lerp(
+          TERRAIN_MATERIAL_SETTINGS.initialSoilDepthMin,
+          TERRAIN_MATERIAL_SETTINGS.initialSoilDepthMax,
+          valleyRetention * (1 - rockyExposure * 0.45),
+        );
+
+        soilDepth[index] = clamp(cellSoilDepth, TERRAIN_MATERIAL_SETTINGS.initialSoilDepthMin, TERRAIN_MATERIAL_SETTINGS.initialSoilDepthMax);
+        coarseRock[index] = lerp(
+          TERRAIN_MATERIAL_SETTINGS.initialRockinessMin,
+          TERRAIN_MATERIAL_SETTINGS.initialRockinessMax,
+          rockyExposure,
+        );
+        bedrockHeights[index] = Math.max(0, heights[index] - soilDepth[index]);
+        heights[index] = bedrockHeights[index] + soilDepth[index];
+      }
+    }
+
     const terrain: TerrainData = {
       seed: featureSeed,
       grid,
       cellSize: options.cellSize,
       heights,
+      bedrockHeights,
+      soilDepth,
+      coarseRock,
       minHeight: 0,
       maxHeight: 0,
     };
     recomputeTerrainBounds(terrain);
     return terrain;
   }
+}
+
+function sampleSlope(grid: Grid, heights: Float32Array, x: number, y: number): number {
+  const left = heights[grid.index(Math.max(x - 1, 0), y)];
+  const right = heights[grid.index(Math.min(x + 1, grid.width - 1), y)];
+  const top = heights[grid.index(x, Math.max(y - 1, 0))];
+  const bottom = heights[grid.index(x, Math.min(y + 1, grid.height - 1))];
+  const dx = Math.abs(right - left);
+  const dy = Math.abs(bottom - top);
+  return Math.min(1, (dx + dy) / 10);
 }

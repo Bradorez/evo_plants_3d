@@ -21,11 +21,11 @@ import { clamp, inverseLerp, lerp } from "../utils/math";
  * once per seed, but its colors and a very small render-only channel shaping
  * pass are updated over time from hydrology outputs.
  *
- * The important design choice is that terrain-water coupling stays derived and
- * reversible:
- * - the simulation terrain heightmap is never mutated
+ * The important design choice is that terrain-water coupling stays lightweight:
+ * - simulation owns the evolving terrain and layered ground materials
+ * - the renderer derives color and a tiny visual shaping pass from that state
  * - wetness and channel masks live only in the renderer
- * - persistent flow leaves visual memory, not destructive erosion
+ * - exposed rock appears from thin-soil / coarse-rich cells
  * - vegetation is treated as another derived ecological field layered on top
  */
 export class TerrainMeshRenderer {
@@ -54,6 +54,7 @@ export class TerrainMeshRenderer {
   private baseTopHeights = new Float32Array();
   private elevationField = new Float32Array();
   private slopeField = new Float32Array();
+  private rockExposureField = new Float32Array();
   private topToPerimeterCopy = new Int32Array();
 
   private waterSignal = new Float32Array();
@@ -108,6 +109,7 @@ export class TerrainMeshRenderer {
     this.baseTopHeights = new Float32Array(topVertexCount);
     this.elevationField = new Float32Array(topVertexCount);
     this.slopeField = new Float32Array(topVertexCount);
+    this.rockExposureField = new Float32Array(topVertexCount);
     this.topToPerimeterCopy = new Int32Array(topVertexCount);
     this.topToPerimeterCopy.fill(-1);
 
@@ -126,11 +128,13 @@ export class TerrainMeshRenderer {
         const elevation = terrain.heights[index];
         const slope = this.sampleSlope(terrain, x, y);
         const normalizedElevation = inverseLerp(terrain.minHeight, terrain.maxHeight, elevation);
-        const color = this.getDryTerrainColor(normalizedElevation, slope);
+        const rockExposure = this.getRockExposure(terrain, index, slope);
+        const color = this.getDryTerrainColor(normalizedElevation, slope, rockExposure);
 
         this.baseTopHeights[index] = elevation;
         this.elevationField[index] = normalizedElevation;
         this.slopeField[index] = slope;
+        this.rockExposureField[index] = rockExposure;
 
         this.basePositions[positionOffset] = x * cellSize - halfWidth;
         this.basePositions[positionOffset + 1] = elevation;
@@ -441,6 +445,7 @@ export class TerrainMeshRenderer {
       const hydrologyColor = this.getHydrologyTintedColor(
         this.elevationField[index],
         slope,
+        this.rockExposureField[index],
         wetness,
         saturation,
         shoreline,
@@ -546,11 +551,13 @@ export class TerrainMeshRenderer {
       const elevation = terrain.heights[index];
       const slope = this.sampleSlope(terrain, x, y);
       const normalizedElevation = inverseLerp(terrain.minHeight, terrain.maxHeight, elevation);
-      const color = this.getDryTerrainColor(normalizedElevation, slope);
+      const rockExposure = this.getRockExposure(terrain, index, slope);
+      const color = this.getDryTerrainColor(normalizedElevation, slope, rockExposure);
 
       this.baseTopHeights[index] = elevation;
       this.elevationField[index] = normalizedElevation;
       this.slopeField[index] = slope;
+      this.rockExposureField[index] = rockExposure;
 
       this.basePositions[positionOffset + 1] = elevation;
       this.baseColors[colorOffset] = color[0];
@@ -639,12 +646,21 @@ export class TerrainMeshRenderer {
     return Math.min(1, (dx + dy) / 10);
   }
 
-  private getDryTerrainColor(elevation: number, slope: number): [number, number, number] {
+  /**
+   * Dry terrain color is material-aware. As fine soil thins out and coarse
+   * material dominates, the palette shifts from warm soil toward stonier rock.
+   */
+  private getDryTerrainColor(
+    elevation: number,
+    slope: number,
+    rockExposure: number,
+  ): [number, number, number] {
     const low = [0.34, 0.23, 0.15] as const;
     const mids = [0.5, 0.35, 0.23] as const;
     const high = [0.64, 0.48, 0.33] as const;
     const peak = [0.78, 0.63, 0.47] as const;
-    const rock = [0.3, 0.215, 0.15] as const;
+    const rock = [0.4, 0.39, 0.37] as const;
+    const exposedRock = [0.56, 0.55, 0.53] as const;
 
     let r = 0;
     let g = 0;
@@ -667,12 +683,17 @@ export class TerrainMeshRenderer {
       b = lerp(high[2], peak[2], t);
     }
 
-    const rockBlend = Math.min(1, slope * 1.35);
+    const rockBlend = Math.min(1, slope * 1.45);
     r = lerp(r, rock[0], rockBlend);
     g = lerp(g, rock[1], rockBlend);
     b = lerp(b, rock[2], rockBlend);
 
-    const shade = 1 - slope * 0.14;
+    const exposureBlend = clamp(Math.pow(rockExposure, 0.82), 0, 1);
+    r = lerp(r, exposedRock[0], exposureBlend);
+    g = lerp(g, exposedRock[1], exposureBlend);
+    b = lerp(b, exposedRock[2], exposureBlend);
+
+    const shade = 1 - slope * 0.11 + rockExposure * 0.06;
     return [r * shade, g * shade, b * shade];
   }
 
@@ -684,6 +705,7 @@ export class TerrainMeshRenderer {
   private getHydrologyTintedColor(
     elevation: number,
     slope: number,
+    rockExposure: number,
     wetness: number,
     saturation: number,
     shoreline: number,
@@ -691,11 +713,12 @@ export class TerrainMeshRenderer {
     ecologicalMoisture: number,
     floodMemory: number,
   ): [number, number, number] {
-    const base = this.getDryTerrainColor(elevation, slope);
+    const base = this.getDryTerrainColor(elevation, slope, rockExposure);
     const damp = [0.28, 0.21, 0.14] as const;
     const saturated = [0.2, 0.16, 0.12] as const;
     const shorelineTint = [0.34, 0.27, 0.17] as const;
     const channelTint = [0.18, 0.145, 0.115] as const;
+    const channelStoneTint = [0.34, 0.35, 0.36] as const;
     const ecologicalTint = [0.22, 0.245, 0.16] as const;
     const floodTint = [0.16, 0.2, 0.18] as const;
 
@@ -719,6 +742,15 @@ export class TerrainMeshRenderer {
     g = lerp(g, channelTint[1], persistentChannel * 0.55);
     b = lerp(b, channelTint[2], persistentChannel * 0.55);
 
+    const stonyChannelBlend = clamp(
+      rockExposure * (persistentChannel * 0.5 + shoreline * 0.2 + wetness * 0.1),
+      0,
+      0.48,
+    );
+    r = lerp(r, channelStoneTint[0], stonyChannelBlend);
+    g = lerp(g, channelStoneTint[1], stonyChannelBlend);
+    b = lerp(b, channelStoneTint[2], stonyChannelBlend);
+
     r = lerp(r, ecologicalTint[0], ecologicalMoisture * 0.24);
     g = lerp(g, ecologicalTint[1], ecologicalMoisture * 0.24);
     b = lerp(b, ecologicalTint[2], ecologicalMoisture * 0.24);
@@ -739,6 +771,18 @@ export class TerrainMeshRenderer {
         0.36,
       );
     return [r * darken, g * darken, b * darken];
+  }
+
+  /**
+   * Rendering only needs a compact exposure signal, not a full material solve.
+   * Thin soil, coarse-rich cells, and steep faces all push the surface toward
+   * visibly rockier colors.
+   */
+  private getRockExposure(terrain: TerrainData, index: number, slope: number): number {
+    const soilDepth = terrain.soilDepth[index];
+    const coarseRock = terrain.coarseRock[index];
+    const thinSoilExposure = clamp((1.15 - soilDepth) / 1.15, 0, 1);
+    return clamp(coarseRock * 0.64 + thinSoilExposure * 0.38 + slope * 0.16, 0, 1);
   }
 
   /**

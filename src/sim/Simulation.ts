@@ -132,6 +132,9 @@ export class Simulation {
     this.erosion = new ErosionModel(
       this.terrain.grid,
       this.terrain.heights,
+      this.terrain.bedrockHeights,
+      this.terrain.soilDepth,
+      this.terrain.coarseRock,
       this.waterDepth,
       this.flowAccumulation,
       this.hydrology.getFlowIntensity(),
@@ -230,6 +233,9 @@ export class Simulation {
     this.erosion = new ErosionModel(
       this.terrain.grid,
       this.terrain.heights,
+      this.terrain.bedrockHeights,
+      this.terrain.soilDepth,
+      this.terrain.coarseRock,
       this.waterDepth,
       this.flowAccumulation,
       this.hydrology.getFlowIntensity(),

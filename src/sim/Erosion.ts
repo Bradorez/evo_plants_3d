@@ -3,10 +3,14 @@ import { Grid } from "./Grid";
 import type { TerrainData } from "./Terrain";
 
 export interface ErosionSettings {
-  erosionRate: number;
+  soilErodibility: number;
   depositionRate: number;
   sedimentCapacityFactor: number;
   sedimentTransportRate: number;
+  coarseMaterialMobility: number;
+  coarseDepositionRate: number;
+  bedrockIncisionRate: number;
+  rockExposureThreshold: number;
   maxTerrainDeltaPerTick: number;
   settlingRate: number;
   maxSettlingDeltaPerTick: number;
@@ -41,22 +45,25 @@ const ALL_NEIGHBOR_OFFSETS = [
 ] as const;
 
 /**
- * ErosionModel adds slow landscape evolution on top of the stable hydrology
- * solver. It intentionally stays lightweight:
- * - active flow and persistent accumulation define transport energy
- * - cells erode only by very small clamped amounts
- * - a simple suspended-sediment proxy is moved downhill
- * - low-energy, flatter zones receive weak deposition
+ * ErosionModel now works against a lightweight layered ground model:
+ * - `bedrockHeights` is the slow, resistant substrate
+ * - `soilDepth` is the fast-moving fine material
+ * - `coarseRock` is a bulk surface-rock field that resists erosion and only
+ *   moves a little in strong channels
  *
- * The model mutates `terrain.heights` in place so the next hydrology step sees
- * the updated landscape, but all changes are strictly bounded per tick.
+ * This keeps the simulation grid-based and cheap while making erosion much
+ * less uniformly soft everywhere.
  */
 export class ErosionModel {
   public readonly settings: ErosionSettings = {
-    erosionRate: 0.16,
+    soilErodibility: 0.16,
     depositionRate: 0.075,
     sedimentCapacityFactor: 0.02,
     sedimentTransportRate: 0.42,
+    coarseMaterialMobility: 0.018,
+    coarseDepositionRate: 0.05,
+    bedrockIncisionRate: 0.012,
+    rockExposureThreshold: 0.42,
     maxTerrainDeltaPerTick: 0.0012,
     settlingRate: 0.09,
     maxSettlingDeltaPerTick: 0.00045,
@@ -64,38 +71,48 @@ export class ErosionModel {
 
   private readonly grid: Grid;
   private readonly terrainHeights: Float32Array;
+  private readonly bedrockHeights: Float32Array;
+  private readonly soilDepth: Float32Array;
+  private readonly coarseRock: Float32Array;
   private waterDepth: Float32Array;
   private readonly flowAccumulation: Float32Array;
   private readonly flowIntensity: Float32Array;
   private readonly suspendedSediment: Float32Array;
   private readonly nextSediment: Float32Array;
+  private readonly suspendedCoarse: Float32Array;
+  private readonly nextCoarse: Float32Array;
   private readonly terrainDelta: Float32Array;
   private readonly smoothedTerrainDelta: Float32Array;
+  private readonly coarseDelta: Float32Array;
   private readonly referenceStepSeconds = 1 / 30;
 
   public constructor(
     grid: Grid,
     terrainHeights: Float32Array,
+    bedrockHeights: Float32Array,
+    soilDepth: Float32Array,
+    coarseRock: Float32Array,
     waterDepth: Float32Array,
     flowAccumulation: Float32Array,
     flowIntensity: Float32Array,
   ) {
     this.grid = grid;
     this.terrainHeights = terrainHeights;
+    this.bedrockHeights = bedrockHeights;
+    this.soilDepth = soilDepth;
+    this.coarseRock = coarseRock;
     this.waterDepth = waterDepth;
     this.flowAccumulation = flowAccumulation;
     this.flowIntensity = flowIntensity;
     this.suspendedSediment = new Float32Array(grid.cellCount);
     this.nextSediment = new Float32Array(grid.cellCount);
+    this.suspendedCoarse = new Float32Array(grid.cellCount);
+    this.nextCoarse = new Float32Array(grid.cellCount);
     this.terrainDelta = new Float32Array(grid.cellCount);
     this.smoothedTerrainDelta = new Float32Array(grid.cellCount);
+    this.coarseDelta = new Float32Array(grid.cellCount);
   }
 
-  /**
-   * Hydrology swaps between water buffers internally. The erosion model only
-   * reads water, so it updates its reference to the active hydrology buffer
-   * whenever the simulation step swaps to a new one.
-   */
   public setWaterDepthBuffer(waterDepth: Float32Array): void {
     this.waterDepth = waterDepth;
   }
@@ -103,17 +120,16 @@ export class ErosionModel {
   public reset(): void {
     this.suspendedSediment.fill(0);
     this.nextSediment.fill(0);
+    this.suspendedCoarse.fill(0);
+    this.nextCoarse.fill(0);
     this.terrainDelta.fill(0);
     this.smoothedTerrainDelta.fill(0);
+    this.coarseDelta.fill(0);
   }
 
   public step(dtSeconds: number, terrain: TerrainData): ErosionStepResult {
     if (!Number.isFinite(dtSeconds) || dtSeconds <= 0) {
-      return {
-        totalEroded: 0,
-        totalDeposited: 0,
-        maxTerrainDelta: 0,
-      };
+      return { totalEroded: 0, totalDeposited: 0, maxTerrainDelta: 0 };
     }
 
     const dtScale = dtSeconds / this.referenceStepSeconds;
@@ -123,7 +139,9 @@ export class ErosionModel {
     const maxLogAccumulation = Math.max(1e-6, Math.log1p(maxAccumulation));
 
     this.nextSediment.fill(0);
+    this.nextCoarse.fill(0);
     this.terrainDelta.fill(0);
+    this.coarseDelta.fill(0);
 
     let totalEroded = 0;
     let totalDeposited = 0;
@@ -138,62 +156,132 @@ export class ErosionModel {
         const waterFactor = clamp(water / 0.12, 0, 1);
         const slope = this.sampleSlope(x, y);
         const transportEnergy = clamp(
-          activeFlow * 0.46 + accumulatedFlow * 0.34 + slope * 0.14 + waterFactor * 0.12,
+          activeFlow * 0.44 + accumulatedFlow * 0.3 + slope * 0.16 + waterFactor * 0.1,
           0,
           1,
         );
-        const channelBias = clamp(accumulatedFlow * 0.65 + activeFlow * 0.35, 0, 1);
-        const capacity =
-          this.settings.sedimentCapacityFactor *
-          (0.25 + waterFactor * 0.75) *
-          (0.3 + transportEnergy * 0.7) *
-          (0.4 + channelBias * 0.6);
+        const channelBias = clamp(accumulatedFlow * 0.62 + activeFlow * 0.38, 0, 1);
+        const exposedRock = this.getExposedRockiness(index);
+        const erosionResistance = clamp(
+          exposedRock * 0.62 + this.coarseRock[index] * 0.18,
+          0,
+          0.92,
+        );
 
-        let sediment = this.suspendedSediment[index];
+        let fineSediment = this.suspendedSediment[index];
+        let coarseSediment = this.suspendedCoarse[index];
+
+        const fineCapacity =
+          this.settings.sedimentCapacityFactor *
+          (0.24 + waterFactor * 0.76) *
+          (0.28 + transportEnergy * 0.72) *
+          (0.4 + channelBias * 0.6) *
+          (1 - erosionResistance * 0.58);
 
         if (transportEnergy > 0.08 && waterFactor > 0.03) {
-          const erosionDemand = Math.max(0, capacity - sediment);
-          const erosionAmount = Math.min(
-            erosionDemand * this.settings.erosionRate * dtScale,
-            perTickLimit * (0.35 + transportEnergy * 0.65),
+          const erosionDemand = Math.max(0, fineCapacity - fineSediment);
+          const projectedSoil = Math.max(0, this.soilDepth[index] + this.terrainDelta[index]);
+          const fineErosion = Math.min(
+            erosionDemand * this.settings.soilErodibility * dtScale,
+            projectedSoil,
+            perTickLimit * (0.42 + transportEnergy * 0.58),
           );
 
-          if (erosionAmount > 0) {
-            sediment += erosionAmount;
-            this.terrainDelta[index] -= erosionAmount;
-            totalEroded += erosionAmount;
+          if (fineErosion > 0) {
+            fineSediment += fineErosion;
+            this.terrainDelta[index] -= fineErosion;
+            totalEroded += fineErosion;
+          }
+
+          const exposedAfterFine = this.getProjectedExposedRockiness(index, this.terrainDelta[index]);
+          const bedrockIncision = Math.min(
+            this.settings.bedrockIncisionRate *
+              dtScale *
+              transportEnergy *
+              exposedAfterFine *
+              (0.4 + channelBias * 0.6),
+            this.bedrockHeights[index],
+            perTickLimit * 0.22,
+          );
+
+          if (bedrockIncision > 0) {
+            fineSediment += bedrockIncision * 0.82;
+            coarseSediment += bedrockIncision * 0.18;
+            this.terrainDelta[index] -= bedrockIncision;
+            totalEroded += bedrockIncision;
+          }
+
+          const coarseMobilized = Math.min(
+            this.coarseRock[index],
+            this.settings.coarseMaterialMobility *
+              dtScale *
+              Math.max(0, transportEnergy - 0.55) *
+              (0.45 + channelBias * 0.55),
+          );
+
+          if (coarseMobilized > 0) {
+            this.coarseDelta[index] -= coarseMobilized;
+            coarseSediment += coarseMobilized;
           }
         }
 
         const lowEnergy = clamp((0.42 - transportEnergy) / 0.42, 0, 1);
         const spreadWater = clamp(waterFactor * 0.9 - activeFlow * 0.55, 0, 1);
-        const depositionDemand = Math.max(0, sediment - capacity);
-        const depositionAmount = Math.min(
-          (depositionDemand + capacity * spreadWater * 0.35) *
+        const fineDepositionDemand = Math.max(0, fineSediment - fineCapacity);
+        const fineDeposition = Math.min(
+          (fineDepositionDemand + fineCapacity * spreadWater * 0.35) *
             this.settings.depositionRate *
             dtScale *
             (0.45 + lowEnergy * 0.55),
           perTickLimit * 0.82 * (0.35 + lowEnergy * 0.65),
         );
 
-        if (depositionAmount > 0) {
-          sediment -= depositionAmount;
-          this.terrainDelta[index] += depositionAmount;
-          totalDeposited += depositionAmount;
+        if (fineDeposition > 0) {
+          fineSediment -= fineDeposition;
+          this.terrainDelta[index] += fineDeposition;
+          totalDeposited += fineDeposition;
         }
 
-        const downhillNeighbor = this.findSteepestDownhillNeighbor(x, y, terrainHeightsSurfaceAt(this.terrainHeights, this.waterDepth, index));
-        const transportFraction = clamp(
-          this.settings.sedimentTransportRate * dtScale * (transportEnergy * 0.75 + waterFactor * 0.15),
-          0,
-          0.7,
+        const coarseDeposition = Math.min(
+          coarseSediment,
+          this.settings.coarseDepositionRate *
+            dtScale *
+            Math.max(0, lowEnergy) *
+            (0.4 + exposedRock * 0.6),
         );
-        const movedSediment =
-          downhillNeighbor >= 0 ? Math.min(sediment, sediment * transportFraction) : 0;
 
-        this.nextSediment[index] += sediment - movedSediment;
-        if (downhillNeighbor >= 0 && movedSediment > 0) {
-          this.nextSediment[downhillNeighbor] += movedSediment;
+        if (coarseDeposition > 0) {
+          coarseSediment -= coarseDeposition;
+          this.coarseDelta[index] += coarseDeposition;
+          totalDeposited += coarseDeposition * 0.15;
+        }
+
+        const downhillNeighbor = this.findSteepestDownhillNeighbor(
+          x,
+          y,
+          terrainSurfaceAt(this.terrainHeights, this.waterDepth, index),
+        );
+        const fineTransportFraction = clamp(
+          this.settings.sedimentTransportRate *
+            dtScale *
+            (transportEnergy * 0.74 + waterFactor * 0.16),
+          0,
+          0.72,
+        );
+        const coarseTransportFraction = clamp(
+          fineTransportFraction * this.settings.coarseMaterialMobility * 2.2,
+          0,
+          0.18,
+        );
+        const movedFine = downhillNeighbor >= 0 ? Math.min(fineSediment, fineSediment * fineTransportFraction) : 0;
+        const movedCoarse =
+          downhillNeighbor >= 0 ? Math.min(coarseSediment, coarseSediment * coarseTransportFraction) : 0;
+
+        this.nextSediment[index] += fineSediment - movedFine;
+        this.nextCoarse[index] += coarseSediment - movedCoarse;
+        if (downhillNeighbor >= 0) {
+          this.nextSediment[downhillNeighbor] += movedFine;
+          this.nextCoarse[downhillNeighbor] += movedCoarse;
         }
       }
     }
@@ -204,24 +292,17 @@ export class ErosionModel {
 
     for (let index = 0; index < this.grid.cellCount; index += 1) {
       const delta = clamp(this.smoothedTerrainDelta[index], -perTickLimit, perTickLimit);
-      this.terrainHeights[index] += delta;
+      this.applyTerrainDelta(index, delta);
+      this.coarseRock[index] = clamp(this.coarseRock[index] + this.coarseDelta[index], 0, 1);
+      this.terrainHeights[index] = this.bedrockHeights[index] + this.soilDepth[index];
       this.suspendedSediment[index] = Math.max(0, this.nextSediment[index]);
+      this.suspendedCoarse[index] = Math.max(0, this.nextCoarse[index]);
       maxTerrainDelta = Math.max(maxTerrainDelta, Math.abs(delta));
     }
 
-    return {
-      totalEroded,
-      totalDeposited,
-      maxTerrainDelta,
-    };
+    return { totalEroded, totalDeposited, maxTerrainDelta };
   }
 
-  /**
-   * Slow terrain settling acts as a long-timescale clean-up pass. It does not
-   * compete with channel incision; it only nudges calm, mostly dry, low-flow
-   * cells toward their local neighborhood average to reduce isolated bumps or
-   * pits created by many tiny erosion/deposition steps.
-   */
   public settleTerrain(dtSeconds: number): TerrainSettlingResult {
     if (!Number.isFinite(dtSeconds) || dtSeconds <= 0) {
       return { maxTerrainDelta: 0 };
@@ -285,11 +366,47 @@ export class ErosionModel {
 
     for (let index = 0; index < this.grid.cellCount; index += 1) {
       const delta = clamp(this.smoothedTerrainDelta[index], -perTickLimit, perTickLimit);
-      this.terrainHeights[index] += delta;
+      this.applyTerrainDelta(index, delta);
+      this.terrainHeights[index] = this.bedrockHeights[index] + this.soilDepth[index];
       maxTerrainDelta = Math.max(maxTerrainDelta, Math.abs(delta));
     }
 
     return { maxTerrainDelta };
+  }
+
+  private applyTerrainDelta(index: number, delta: number): void {
+    if (delta >= 0) {
+      this.soilDepth[index] += delta;
+      return;
+    }
+
+    let remainingRemoval = -delta;
+    const soilRemoval = Math.min(this.soilDepth[index], remainingRemoval);
+    this.soilDepth[index] -= soilRemoval;
+    remainingRemoval -= soilRemoval;
+
+    if (remainingRemoval > 0) {
+      this.bedrockHeights[index] = Math.max(0, this.bedrockHeights[index] - remainingRemoval);
+    }
+  }
+
+  private getExposedRockiness(index: number): number {
+    return clamp(
+      this.coarseRock[index] * 0.55 +
+        Math.max(0, 1 - this.soilDepth[index] / this.settings.rockExposureThreshold) * 0.45,
+      0,
+      1,
+    );
+  }
+
+  private getProjectedExposedRockiness(index: number, pendingDelta: number): number {
+    const projectedSoil = Math.max(0, this.soilDepth[index] + Math.min(0, pendingDelta));
+    return clamp(
+      this.coarseRock[index] * 0.55 +
+        Math.max(0, 1 - projectedSoil / this.settings.rockExposureThreshold) * 0.45,
+      0,
+      1,
+    );
   }
 
   private sampleSlope(x: number, y: number): number {
@@ -324,7 +441,7 @@ export class ErosionModel {
       }
 
       const sampleIndex = this.grid.index(sampleX, sampleY);
-      const sampleSurface = terrainHeightsSurfaceAt(this.terrainHeights, this.waterDepth, sampleIndex);
+      const sampleSurface = terrainSurfaceAt(this.terrainHeights, this.waterDepth, sampleIndex);
       const drop = (centerSurface - sampleSurface) / offset.distance;
 
       if (drop > bestDrop) {
@@ -336,11 +453,6 @@ export class ErosionModel {
     return bestIndex;
   }
 
-  /**
-   * A light smoothing pass prevents noisy single-cell artifacts while keeping
-   * channels coherent. The center keeps most of its value, and the four
-   * cardinal neighbors only soften the local delta rather than flatten it away.
-   */
   private smoothTerrainDelta(): void {
     for (let y = 0; y < this.grid.height; y += 1) {
       for (let x = 0; x < this.grid.width; x += 1) {
@@ -376,7 +488,7 @@ export class ErosionModel {
   }
 }
 
-function terrainHeightsSurfaceAt(
+function terrainSurfaceAt(
   terrainHeights: Float32Array,
   waterDepth: Float32Array,
   index: number,
