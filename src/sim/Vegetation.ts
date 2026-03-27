@@ -2,11 +2,15 @@ import { clamp } from "../utils/math";
 import { valueNoise2D } from "../utils/noise";
 import type { TerrainData } from "./Terrain";
 import {
+  buildHabitatPressureProfile,
   classifyPhenotype,
   createInitialSpeciesCatalog,
+  dominantHabitatPressure,
   ECOLOGY_PROFILE_DRYLAND,
   ECOLOGY_PROFILE_MESIC,
   ECOLOGY_PROFILE_WETLAND,
+  evaluateMorphologyHabitatFit,
+  type HabitatPressureProfile,
   mutateSpecies,
   phenotypeName,
   PlantPhenotypeClass,
@@ -46,7 +50,9 @@ export interface VegetationDebugSummary {
   averageCompletedLifespanSeconds: number;
   oldestLiveAgeSeconds: number;
   dominantPhenotype: string;
+  dominantPressure: string;
   phenotypeCounts: Record<string, number>;
+  pressureCounts: Record<string, number>;
 }
 
 /**
@@ -136,6 +142,7 @@ export class VegetationModel {
 
   public getDebugSummary(): VegetationDebugSummary {
     const phenotypeCounts: Record<string, number> = {};
+    const pressureCounts: Record<string, number> = {};
     const activeSpecies = new Set<number>();
     let livingCellCount = 0;
     let denseCellCount = 0;
@@ -156,6 +163,17 @@ export class VegetationModel {
 
       const label = phenotypeName(species.phenotype);
       phenotypeCounts[label] = (phenotypeCounts[label] ?? 0) + 1;
+      const habitat = buildHabitatPressureProfile(
+        species.ecology.moisturePreference,
+        species.ecology.persistentWetnessPreference,
+        species.ecology.floodTolerance,
+        species.ecology.standingWaterTolerance,
+        1 - species.ecology.slopeTolerance,
+        species.ecology.persistentWetnessPreference,
+        1 - species.ecology.moisturePreference,
+      );
+      const pressureLabel = dominantHabitatPressure(habitat);
+      pressureCounts[pressureLabel] = (pressureCounts[pressureLabel] ?? 0) + 1;
       activeSpecies.add(speciesId);
       livingCellCount += 1;
       if (this.densityClass[index] >= 3) {
@@ -167,6 +185,7 @@ export class VegetationModel {
     }
 
     const dominantPhenotypeEntry = Object.entries(phenotypeCounts).sort((left, right) => right[1] - left[1])[0];
+    const dominantPressureEntry = Object.entries(pressureCounts).sort((left, right) => right[1] - left[1])[0];
 
     return {
       speciesCount: this.speciesCatalog.length,
@@ -181,7 +200,9 @@ export class VegetationModel {
         this.completedLives > 0 ? this.completedLifespanSeconds / this.completedLives : 0,
       oldestLiveAgeSeconds,
       dominantPhenotype: dominantPhenotypeEntry?.[0] ?? "none",
+      dominantPressure: dominantPressureEntry?.[0] ?? "mixed",
       phenotypeCounts,
+      pressureCounts,
     };
   }
 
@@ -237,7 +258,17 @@ export class VegetationModel {
           0,
           1,
         );
+        const seededHabitat = buildHabitatPressureProfile(
+          seededMoisture,
+          seededWetness,
+          floodProne[index],
+          0,
+          slope,
+          seededWetness,
+          normalizedElevation,
+        );
         const selection = this.pickBestSpecies(
+          seededHabitat,
           seededMoisture,
           seededWetness,
           floodProne[index],
@@ -311,8 +342,18 @@ export class VegetationModel {
         const standingWater = clamp(waterDepth[index] / 0.05, 0, 1);
         const support = this.neighborSupport[index];
         const wetAdjacency = this.nearbyWetness[index];
+        const habitat = buildHabitatPressureProfile(
+          moisture,
+          wetness,
+          flood,
+          standingWater,
+          slope,
+          wetAdjacency,
+          normalizedElevation,
+        );
         const neighborCandidate = this.selectNeighborSpeciesCandidate(terrain, x, y);
         const environmentCandidate = this.pickBestSpecies(
+          habitat,
           moisture,
           wetness,
           flood,
@@ -327,6 +368,7 @@ export class VegetationModel {
         const currentSuitability = currentSpecies
           ? this.evaluateSpeciesSuitability(
               currentSpecies,
+              habitat,
               moisture,
               wetness,
               flood,
@@ -357,8 +399,14 @@ export class VegetationModel {
         const activeStressSpecies =
           activeStressSpeciesId === SPECIES_NONE ? null : this.speciesCatalog[activeStressSpeciesId] ?? null;
         const competition = support * this.settings.carryingCapacityStrength;
+        const morphologyPerformance = activeStressSpecies
+          ? evaluateMorphologyHabitatFit(activeStressSpecies, habitat)
+          : 0.5;
         const carryingCapacity = clamp(
-          targetSuitability * (1 - competition * 0.45) * (0.88 + wetAdjacency * 0.12),
+          targetSuitability *
+            (0.82 + morphologyPerformance * 0.18) *
+            (1 - competition * 0.45) *
+            (0.88 + wetAdjacency * 0.12),
           0,
           1,
         );
@@ -390,6 +438,7 @@ export class VegetationModel {
             growthPotential *
             this.settings.growthRate *
             (0.32 + support * 0.68) *
+            (0.78 + morphologyPerformance * 0.22) *
             this.resolveVigor(activeStressSpeciesId) *
             dtSeconds;
           nextBiomass -=
@@ -407,6 +456,7 @@ export class VegetationModel {
               colonizer.speciesId,
               x,
               y,
+              habitat,
               support,
               colonizer.score,
             );
@@ -519,6 +569,7 @@ export class VegetationModel {
   }
 
   private pickBestSpecies(
+    habitat: HabitatPressureProfile,
     moisture: number,
     persistentWetness: number,
     floodProne: number,
@@ -532,6 +583,7 @@ export class VegetationModel {
     for (const species of this.speciesCatalog) {
       const score = this.evaluateSpeciesSuitability(
         species,
+        habitat,
         moisture,
         persistentWetness,
         floodProne,
@@ -551,6 +603,7 @@ export class VegetationModel {
 
   private evaluateSpeciesSuitability(
     species: PlantSpeciesDefinition,
+    habitat: HabitatPressureProfile,
     moisture: number,
     persistentWetness: number,
     floodProne: number,
@@ -596,12 +649,14 @@ export class VegetationModel {
         : species.ecologyProfile === VEGETATION_PROFILE_WETLAND
           ? (1 - normalizedElevation) * 0.14
           : 0.08;
+    const morphologyFit = evaluateMorphologyHabitatFit(species, habitat);
 
     return clamp(
       moistureFit * 0.36 +
         wetnessFit * 0.24 +
         ecology.vigor * 0.16 +
         (1 - slopePenalty) * 0.12 +
+        morphologyFit * 0.2 +
         elevationBias -
         droughtPenalty * 0.2 -
         floodPenalty * 0.26 -
@@ -652,6 +707,7 @@ export class VegetationModel {
     speciesId: number,
     x: number,
     y: number,
+    habitat: HabitatPressureProfile,
     support: number,
     suitability: number,
   ): number {
@@ -679,7 +735,12 @@ export class VegetationModel {
       return speciesId;
     }
 
-    const descendant = mutateSpecies(parent, this.nextSpeciesId, this.seed + this.vegetationStepCounter * 37);
+    const descendant = mutateSpecies(
+      parent,
+      this.nextSpeciesId,
+      this.seed + this.vegetationStepCounter * 37,
+      habitat,
+    );
     descendant.phenotype = classifyPhenotype(descendant.morphology);
     this.speciesCatalog = [...this.speciesCatalog, descendant];
     this.nextSpeciesId += 1;

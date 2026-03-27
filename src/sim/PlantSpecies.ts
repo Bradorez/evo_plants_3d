@@ -66,6 +66,19 @@ export interface PlantSpeciesDefinition {
   hueSeed: number;
 }
 
+export interface HabitatPressureProfile {
+  moisture: number;
+  persistentWetness: number;
+  floodProne: number;
+  standingWater: number;
+  slope: number;
+  stability: number;
+  dryness: number;
+  fertileMoisture: number;
+  channelInfluence: number;
+  lowland: number;
+}
+
 export interface PlantRenderParameters {
   heightScale: number;
   trunkHeightFraction: number;
@@ -134,10 +147,11 @@ export function mutateSpecies(
   parent: PlantSpeciesDefinition,
   newId: number,
   seed: number,
+  habitat?: HabitatPressureProfile,
 ): PlantSpeciesDefinition {
   const random = createSeededRandom(seed + newId * 977 + parent.id * 131);
-  const ecology = mutateEcology(parent.ecology, random, 0.12);
-  const morphology = mutateMorphology(parent.morphology, random, 0.14);
+  const ecology = mutateEcology(parent.ecology, random, 0.12, habitat);
+  const morphology = mutateMorphology(parent.morphology, random, 0.14, habitat, ecology);
   const phenotype = classifyPhenotype(morphology);
 
   return {
@@ -151,6 +165,129 @@ export function mutateSpecies(
     phenotype,
     hueSeed: mixSeed(seed + newId * 1543 + parent.hueSeed),
   };
+}
+
+export function buildHabitatPressureProfile(
+  moisture: number,
+  persistentWetness: number,
+  floodProne: number,
+  standingWater: number,
+  slope: number,
+  wetAdjacency: number,
+  normalizedElevation: number,
+): HabitatPressureProfile {
+  const stability = clamp((1 - slope) * 0.82 + (1 - floodProne) * 0.18, 0, 1);
+  const dryness = clamp((1 - moisture) * 0.72 + slope * 0.18 + (1 - wetAdjacency) * 0.1, 0, 1);
+  const fertileMoisture = clamp(
+    moisture * 0.46 + stability * 0.26 + wetAdjacency * 0.18 + (1 - standingWater) * 0.1,
+    0,
+    1,
+  );
+  const channelInfluence = clamp(
+    persistentWetness * 0.34 + floodProne * 0.26 + wetAdjacency * 0.24 + standingWater * 0.16,
+    0,
+    1,
+  );
+  const lowland = clamp((1 - normalizedElevation) * 0.68 + persistentWetness * 0.18 + wetAdjacency * 0.14, 0, 1);
+
+  return {
+    moisture,
+    persistentWetness,
+    floodProne,
+    standingWater,
+    slope,
+    stability,
+    dryness,
+    fertileMoisture,
+    channelInfluence,
+    lowland,
+  };
+}
+
+export function evaluateMorphologyHabitatFit(
+  species: PlantSpeciesDefinition,
+  habitat: HabitatPressureProfile,
+): number {
+  const morphology = species.morphology;
+  const phenotype = species.phenotype;
+
+  const dryLowFormFit =
+    habitat.dryness *
+    clamp(
+      morphology.groundCoverFactor * 0.42 +
+        (1 - morphology.maxHeight / MORPHOLOGY_BOUNDS.maxHeight[1]) * 0.28 +
+        (1 - morphology.crownWidth / MORPHOLOGY_BOUNDS.crownWidth[1]) * 0.14 +
+        (1 - morphology.woodiness) * 0.16,
+      0,
+      1,
+    );
+  const wetlandFit =
+    habitat.channelInfluence *
+    clamp(
+      species.ecology.floodTolerance * 0.28 +
+        morphology.uprightness * 0.18 +
+        morphology.topCanopyBias * 0.12 +
+        morphology.leafDensity * 0.12 +
+        (phenotype === PlantPhenotypeClass.Reed ? 0.3 : 0),
+      0,
+      1,
+    );
+  const fertileTallFit =
+    habitat.fertileMoisture *
+    habitat.stability *
+    clamp(
+      (morphology.maxHeight / MORPHOLOGY_BOUNDS.maxHeight[1]) * 0.34 +
+        morphology.woodiness * 0.24 +
+        morphology.branchDensity * 0.14 +
+        morphology.crownWidth / MORPHOLOGY_BOUNDS.crownWidth[1] * 0.14 +
+        (phenotype === PlantPhenotypeClass.BroadleafTree ? 0.14 : 0),
+      0,
+      1,
+    );
+  const slopeFit =
+    habitat.slope *
+    clamp(
+      (phenotype === PlantPhenotypeClass.Conifer ? 0.24 : 0) +
+        (phenotype === PlantPhenotypeClass.Shrub ? 0.14 : 0) +
+        morphology.uprightness * 0.16 +
+        (1 - morphology.crownWidth / MORPHOLOGY_BOUNDS.crownWidth[1]) * 0.2 +
+        (1 - morphology.groundCoverFactor) * 0.1 +
+        species.ecology.slopeTolerance * 0.16,
+      0,
+      1,
+    );
+
+  const droughtCost =
+    habitat.dryness *
+    clamp(
+      morphology.maxHeight / MORPHOLOGY_BOUNDS.maxHeight[1] * 0.26 +
+        morphology.crownWidth / MORPHOLOGY_BOUNDS.crownWidth[1] * 0.18 +
+        morphology.leafSize / MORPHOLOGY_BOUNDS.leafSize[1] * 0.12,
+      0,
+      0.4,
+    );
+  const floodCost =
+    habitat.channelInfluence *
+    clamp(
+      morphology.woodiness * 0.08 +
+        (phenotype === PlantPhenotypeClass.BroadleafTree ? 0.1 : 0) +
+        (phenotype === PlantPhenotypeClass.Conifer ? 0.12 : 0),
+      0,
+      0.28,
+    );
+
+  return clamp(dryLowFormFit + wetlandFit + fertileTallFit + slopeFit - droughtCost - floodCost, 0, 1);
+}
+
+export function dominantHabitatPressure(habitat: HabitatPressureProfile): string {
+  const options: Array<[string, number]> = [
+    ["flooded margin", habitat.channelInfluence * 0.9 + habitat.floodProne * 0.1],
+    ["dry stress", habitat.dryness],
+    ["fertile stable", habitat.fertileMoisture * habitat.stability],
+    ["steep slope", habitat.slope],
+  ];
+
+  return options.sort((left, right) => right[1] - left[1])[0]?.[0] ?? "mixed";
 }
 
 /**
@@ -500,8 +637,9 @@ function mutateEcology(
   source: PlantEcologyTraits,
   random: () => number,
   strength: number,
+  habitat?: HabitatPressureProfile,
 ): PlantEcologyTraits {
-  return {
+  const ecology: PlantEcologyTraits = {
     moisturePreference: clamp(source.moisturePreference + signedJitter(random, strength), 0, 1),
     moistureTolerance: clamp(source.moistureTolerance + signedJitter(random, strength * 0.8), 0.08, 0.48),
     persistentWetnessPreference: clamp(
@@ -520,14 +658,29 @@ function mutateEcology(
     spreadAbility: clamp(source.spreadAbility + signedJitter(random, strength), 0.08, 1),
     vigor: clamp(source.vigor + signedJitter(random, strength), 0.1, 1),
   };
+
+  if (!habitat) {
+    return ecology;
+  }
+
+  ecology.moisturePreference = lerp(ecology.moisturePreference, habitat.moisture, 0.18);
+  ecology.persistentWetnessPreference = lerp(ecology.persistentWetnessPreference, habitat.persistentWetness, 0.16);
+  ecology.floodTolerance = lerp(ecology.floodTolerance, habitat.channelInfluence, 0.2);
+  ecology.standingWaterTolerance = lerp(ecology.standingWaterTolerance, habitat.standingWater, 0.18);
+  ecology.droughtTolerance = lerp(ecology.droughtTolerance, habitat.dryness, 0.18);
+  ecology.slopeTolerance = lerp(ecology.slopeTolerance, habitat.slope * 0.8 + 0.2, 0.14);
+  ecology.vigor = lerp(ecology.vigor, habitat.fertileMoisture * 0.6 + habitat.stability * 0.4, 0.12);
+  return ecology;
 }
 
 function mutateMorphology(
   source: PlantMorphologyTraits,
   random: () => number,
   strength: number,
+  habitat?: HabitatPressureProfile,
+  ecology?: PlantEcologyTraits,
 ): PlantMorphologyTraits {
-  return {
+  const morphology: PlantMorphologyTraits = {
     maxHeight: clampRange(source.maxHeight * (1 + signedJitter(random, strength)), MORPHOLOGY_BOUNDS.maxHeight),
     woodiness: clamp(source.woodiness + signedJitter(random, strength), 0, 1),
     stemCount: clampRange(source.stemCount + signedJitter(random, strength * 8), MORPHOLOGY_BOUNDS.stemCount),
@@ -555,6 +708,97 @@ function mutateMorphology(
     groundCoverFactor: clamp(source.groundCoverFactor + signedJitter(random, strength), 0, 1),
     uprightness: clamp(source.uprightness + signedJitter(random, strength), 0, 1),
   };
+
+  if (!habitat) {
+    return morphology;
+  }
+
+  const dryPressure = habitat.dryness;
+  const wetPressure = habitat.channelInfluence;
+  const stableFertilePressure = habitat.fertileMoisture * habitat.stability;
+  const slopePressure = habitat.slope;
+
+  morphology.maxHeight = lerp(
+    morphology.maxHeight,
+    0.55 + stableFertilePressure * 10.8 - dryPressure * 3.2 - wetPressure * 1.2,
+    0.14,
+  );
+  morphology.woodiness = lerp(
+    morphology.woodiness,
+    stableFertilePressure * 0.72 + slopePressure * 0.18 + dryPressure * 0.1,
+    0.16,
+  );
+  morphology.crownWidth = lerp(
+    morphology.crownWidth,
+    0.4 + stableFertilePressure * 3.1 + wetPressure * 0.8 - slopePressure * 1.1 - dryPressure * 0.9,
+    0.14,
+  );
+  morphology.crownHeight = lerp(
+    morphology.crownHeight,
+    0.35 + stableFertilePressure * 2.5 + slopePressure * 0.8 + wetPressure * 0.3,
+    0.12,
+  );
+  morphology.groundCoverFactor = lerp(
+    morphology.groundCoverFactor,
+    dryPressure * 0.56 + wetPressure * 0.32 + (1 - stableFertilePressure) * 0.12,
+    0.18,
+  );
+  morphology.uprightness = lerp(
+    morphology.uprightness,
+    wetPressure * 0.34 + slopePressure * 0.28 + stableFertilePressure * 0.22 + 0.16,
+    0.12,
+  );
+  morphology.topCanopyBias = lerp(
+    morphology.topCanopyBias,
+    stableFertilePressure * 0.62 + wetPressure * 0.18 + slopePressure * 0.12,
+    0.12,
+  );
+  morphology.branchDensity = lerp(
+    morphology.branchDensity,
+    stableFertilePressure * 0.56 + (ecology?.floodTolerance ?? 0) * 0.12 + dryPressure * 0.08,
+    0.12,
+  );
+  morphology.leafDensity = lerp(
+    morphology.leafDensity,
+    stableFertilePressure * 0.44 + wetPressure * 0.24 + (ecology?.droughtTolerance ?? 0) * 0.08,
+    0.12,
+  );
+  morphology.leafSize = lerp(
+    morphology.leafSize,
+    0.12 + stableFertilePressure * 0.58 + wetPressure * 0.22 - dryPressure * 0.18,
+    0.12,
+  );
+  morphology.trunkThickness = lerp(
+    morphology.trunkThickness,
+    0.04 + stableFertilePressure * 0.34 + slopePressure * 0.08,
+    0.12,
+  );
+
+  if (wetPressure > 0.62 && (ecology?.floodTolerance ?? 0) > 0.56) {
+    morphology.leafType = PlantLeafType.Reed;
+    morphology.woodiness = lerp(morphology.woodiness, 0.16, 0.28);
+    morphology.groundCoverFactor = lerp(morphology.groundCoverFactor, 0.72, 0.24);
+  } else if (dryPressure > 0.64 && (ecology?.droughtTolerance ?? 0) > 0.54) {
+    morphology.leafType = dryPressure > 0.78 ? PlantLeafType.Blade : PlantLeafType.Needle;
+  } else if (stableFertilePressure > 0.58 && (ecology?.floodTolerance ?? 0) < 0.42) {
+    morphology.leafType = PlantLeafType.Broad;
+  } else if (slopePressure > 0.58 && morphology.woodiness > 0.52) {
+    morphology.leafType = PlantLeafType.Needle;
+  }
+
+  morphology.maxHeight = clampRange(morphology.maxHeight, MORPHOLOGY_BOUNDS.maxHeight);
+  morphology.woodiness = clamp(morphology.woodiness, 0, 1);
+  morphology.stemCount = clampRange(morphology.stemCount, MORPHOLOGY_BOUNDS.stemCount);
+  morphology.trunkThickness = clampRange(morphology.trunkThickness, MORPHOLOGY_BOUNDS.trunkThickness);
+  morphology.branchDensity = clamp(morphology.branchDensity, 0, 1);
+  morphology.crownWidth = clampRange(morphology.crownWidth, MORPHOLOGY_BOUNDS.crownWidth);
+  morphology.crownHeight = clampRange(morphology.crownHeight, MORPHOLOGY_BOUNDS.crownHeight);
+  morphology.leafSize = clampRange(morphology.leafSize, MORPHOLOGY_BOUNDS.leafSize);
+  morphology.leafDensity = clamp(morphology.leafDensity, 0, 1);
+  morphology.topCanopyBias = clamp(morphology.topCanopyBias, 0, 1);
+  morphology.groundCoverFactor = clamp(morphology.groundCoverFactor, 0, 1);
+  morphology.uprightness = clamp(morphology.uprightness, 0, 1);
+  return morphology;
 }
 
 function mutateLeafType(

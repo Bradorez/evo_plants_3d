@@ -56,10 +56,12 @@ export function createControls(
   const densePlantCellsValue = queryElement<HTMLElement>("densePlantCellsValue");
   const averagePlantBiomassValue = queryElement<HTMLElement>("averagePlantBiomassValue");
   const dominantPhenotypeValue = queryElement<HTMLElement>("dominantPhenotypeValue");
+  const dominantPressureValue = queryElement<HTMLElement>("dominantPressureValue");
   const averagePlantAgeValue = queryElement<HTMLElement>("averagePlantAgeValue");
   const averagePlantLifespanValue = queryElement<HTMLElement>("averagePlantLifespanValue");
   const oldestPlantValue = queryElement<HTMLElement>("oldestPlantValue");
   const plantPhenotypeValue = queryElement<HTMLElement>("plantPhenotypeValue");
+  const plantPressureValue = queryElement<HTMLElement>("plantPressureValue");
 
   let isRunning = initialState.isRunning;
 
@@ -136,6 +138,7 @@ export function createControls(
     },
     setVegetationDebug: (summary: VegetationDebugSummary) => {
       const entries = Object.entries(summary.phenotypeCounts).sort((left, right) => right[1] - left[1]);
+      const pressureEntries = Object.entries(summary.pressureCounts).sort((left, right) => right[1] - left[1]);
       plantSpeciesValue.textContent = summary.speciesCount.toString();
       activePlantSpeciesValue.textContent = summary.activeSpeciesCount.toString();
       livingPlantCellsValue.textContent = summary.livingCellCount.toString();
@@ -143,6 +146,7 @@ export function createControls(
       densePlantCellsValue.textContent = summary.denseCellCount.toString();
       averagePlantBiomassValue.textContent = summary.averageBiomass.toFixed(2);
       dominantPhenotypeValue.textContent = summary.dominantPhenotype;
+      dominantPressureValue.textContent = summary.dominantPressure;
       averagePlantAgeValue.textContent = `${summary.averageLiveAgeSeconds.toFixed(1)} s`;
       averagePlantLifespanValue.textContent =
         summary.averageCompletedLifespanSeconds > 0
@@ -153,6 +157,10 @@ export function createControls(
         entries.length > 0
           ? entries.map(([label, count]) => `${label} ${count}`).join(", ")
           : "no established plant forms";
+      plantPressureValue.textContent =
+        pressureEntries.length > 0
+          ? pressureEntries.map(([label, count]) => `${label} ${count}`).join(", ")
+          : "pressure mix unavailable";
     },
     getViewOptions: () => ({
       showRivers: riverViewInput.checked,
