@@ -324,13 +324,20 @@ export class TerrainMeshRenderer {
     terrain: TerrainData,
     waterDepth: Float32Array,
     flowAccumulation: Float32Array,
+    soilMoisture: Float32Array,
+    persistentWetness: Float32Array,
+    floodProne: Float32Array,
     dtSeconds: number,
+    showMoisture: boolean,
   ): void {
     if (
       !this.mesh ||
       !this.occluderMesh ||
       waterDepth.length !== this.topVertexCount ||
-      flowAccumulation.length !== this.topVertexCount
+      flowAccumulation.length !== this.topVertexCount ||
+      soilMoisture.length !== this.topVertexCount ||
+      persistentWetness.length !== this.topVertexCount ||
+      floodProne.length !== this.topVertexCount
     ) {
       return;
     }
@@ -387,15 +394,22 @@ export class TerrainMeshRenderer {
         1,
       );
       const shoreline = clamp(nearbyWater * 0.95 - water * 0.7, 0, 1);
+      const ecologicalMoisture = clamp(
+        soilMoisture[index] * 0.7 + persistentWetness[index] * 0.3,
+        0,
+        1,
+      );
+      const floodMemory = floodProne[index];
       const wetness = clamp(
         nearbyWater * 0.55 +
           water * 0.45 +
           this.flowSignal[index] * 0.12 +
-          persistentChannel * 0.24,
+          persistentChannel * 0.24 +
+          ecologicalMoisture * 0.22,
         0,
         1,
       );
-      const saturation = clamp(water * 0.88 + nearbyWater * 0.18, 0, 1);
+      const saturation = clamp(water * 0.88 + nearbyWater * 0.18 + floodMemory * 0.16, 0, 1);
       const slope = this.slopeField[index];
       const channelSupport = clamp(1 - slope * 0.7, 0.28, 1);
       const incision =
@@ -403,14 +417,25 @@ export class TerrainMeshRenderer {
         shoreline * persistentChannel * 0.028;
       const positionOffset = index * 3;
       const colorOffset = index * 4;
-      const color = this.getHydrologyTintedColor(
-        this.elevationField[index],
-        slope,
-        wetness,
-        saturation,
-        shoreline,
-        persistentChannel,
-      );
+      const color = showMoisture
+        ? this.getMoistureVisualizationColor(
+            this.elevationField[index],
+            slope,
+            ecologicalMoisture,
+            persistentWetness[index],
+            floodMemory,
+            water,
+          )
+        : this.getHydrologyTintedColor(
+            this.elevationField[index],
+            slope,
+            wetness,
+            saturation,
+            shoreline,
+            persistentChannel,
+            ecologicalMoisture,
+            floodMemory,
+          );
 
       this.dynamicPositions[positionOffset + 1] = this.baseTopHeights[index] - incision;
       this.occluderPositions[positionOffset + 1] = this.dynamicPositions[positionOffset + 1] + this.occluderLift;
@@ -616,12 +641,16 @@ export class TerrainMeshRenderer {
     saturation: number,
     shoreline: number,
     persistentChannel: number,
+    ecologicalMoisture: number,
+    floodMemory: number,
   ): [number, number, number] {
     const base = this.getDryTerrainColor(elevation, slope);
     const damp = [0.28, 0.21, 0.14] as const;
     const saturated = [0.2, 0.16, 0.12] as const;
     const shorelineTint = [0.34, 0.27, 0.17] as const;
     const channelTint = [0.18, 0.145, 0.115] as const;
+    const ecologicalTint = [0.22, 0.245, 0.16] as const;
+    const floodTint = [0.16, 0.2, 0.18] as const;
 
     let r = base[0];
     let g = base[1];
@@ -643,7 +672,64 @@ export class TerrainMeshRenderer {
     g = lerp(g, channelTint[1], persistentChannel * 0.55);
     b = lerp(b, channelTint[2], persistentChannel * 0.55);
 
-    const darken = 1 - clamp(wetness * 0.15 + saturation * 0.1 + persistentChannel * 0.12, 0, 0.3);
+    r = lerp(r, ecologicalTint[0], ecologicalMoisture * 0.24);
+    g = lerp(g, ecologicalTint[1], ecologicalMoisture * 0.24);
+    b = lerp(b, ecologicalTint[2], ecologicalMoisture * 0.24);
+
+    r = lerp(r, floodTint[0], floodMemory * 0.16);
+    g = lerp(g, floodTint[1], floodMemory * 0.16);
+    b = lerp(b, floodTint[2], floodMemory * 0.16);
+
+    const darken =
+      1 -
+      clamp(
+        wetness * 0.15 +
+          saturation * 0.1 +
+          persistentChannel * 0.12 +
+          ecologicalMoisture * 0.08 +
+          floodMemory * 0.05,
+        0,
+        0.36,
+      );
     return [r * darken, g * darken, b * darken];
+  }
+
+  /**
+   * Moisture view is a debug-oriented ecological palette:
+   * - dry ground stays warm and dusty
+   * - damp ground shifts toward muted olive
+   * - saturated soil shifts to teal-green
+   * - flood-prone areas deepen toward cool blue-green
+   */
+  private getMoistureVisualizationColor(
+    elevation: number,
+    slope: number,
+    ecologicalMoisture: number,
+    persistentWetness: number,
+    floodMemory: number,
+    surfaceWater: number,
+  ): [number, number, number] {
+    const dry = [0.46, 0.34, 0.22] as const;
+    const damp = [0.42, 0.43, 0.2] as const;
+    const saturated = [0.18, 0.42, 0.34] as const;
+    const flood = [0.08, 0.32, 0.46] as const;
+    const moisture = clamp(ecologicalMoisture * 0.72 + persistentWetness * 0.28, 0, 1);
+
+    let r = lerp(dry[0], damp[0], clamp(moisture * 1.15, 0, 1));
+    let g = lerp(dry[1], damp[1], clamp(moisture * 1.15, 0, 1));
+    let b = lerp(dry[2], damp[2], clamp(moisture * 1.15, 0, 1));
+
+    r = lerp(r, saturated[0], clamp((moisture - 0.35) / 0.55, 0, 1));
+    g = lerp(g, saturated[1], clamp((moisture - 0.35) / 0.55, 0, 1));
+    b = lerp(b, saturated[2], clamp((moisture - 0.35) / 0.55, 0, 1));
+
+    const floodBlend = clamp(floodMemory * 0.78 + surfaceWater * 0.55, 0, 1);
+    r = lerp(r, flood[0], floodBlend);
+    g = lerp(g, flood[1], floodBlend);
+    b = lerp(b, flood[2], floodBlend);
+
+    const elevationLift = clamp(0.92 + elevation * 0.08, 0.9, 1);
+    const shade = 1 - slope * 0.12;
+    return [r * elevationLift * shade, g * elevationLift * shade, b * elevationLift * shade];
   }
 }

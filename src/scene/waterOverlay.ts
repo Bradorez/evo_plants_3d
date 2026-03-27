@@ -12,6 +12,7 @@ import { clamp, lerp } from "../utils/math";
 export interface WaterOverlayViewOptions {
   showRivers: boolean;
   showWaterDepth: boolean;
+  showMoisture: boolean;
 }
 
 /**

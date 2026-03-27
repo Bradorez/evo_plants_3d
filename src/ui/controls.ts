@@ -41,6 +41,7 @@ export function createControls(
   const simulationSpeedValue = queryElement<HTMLOutputElement>("simulationSpeedValue");
   const riverViewInput = queryElement<HTMLInputElement>("riverViewInput");
   const waterDepthViewInput = queryElement<HTMLInputElement>("waterDepthViewInput");
+  const moistureViewInput = queryElement<HTMLInputElement>("moistureViewInput");
   const seedValue = queryElement<HTMLElement>("seedValue");
   const timeValue = queryElement<HTMLElement>("timeValue");
   const waterValue = queryElement<HTMLElement>("waterValue");
@@ -64,6 +65,7 @@ export function createControls(
     callbacks.onViewOptionsChange({
       showRivers: riverViewInput.checked,
       showWaterDepth: waterDepthViewInput.checked,
+      showMoisture: moistureViewInput.checked,
     });
   };
 
@@ -71,6 +73,7 @@ export function createControls(
   simulationSpeedInput.value = initialState.simulationSpeed.toString();
   riverViewInput.checked = initialState.viewOptions.showRivers;
   waterDepthViewInput.checked = initialState.viewOptions.showWaterDepth;
+  moistureViewInput.checked = initialState.viewOptions.showMoisture;
   updateRunningText();
   updateRainValue();
   updateSpeedValue();
@@ -101,6 +104,7 @@ export function createControls(
 
   riverViewInput.addEventListener("change", emitViewOptions);
   waterDepthViewInput.addEventListener("change", emitViewOptions);
+  moistureViewInput.addEventListener("change", emitViewOptions);
 
   return {
     setRunning: (running: boolean) => {
@@ -116,6 +120,7 @@ export function createControls(
     getViewOptions: () => ({
       showRivers: riverViewInput.checked,
       showWaterDepth: waterDepthViewInput.checked,
+      showMoisture: moistureViewInput.checked,
     }),
   };
 }
