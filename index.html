@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    />
+    <title>Terrain Hydrology Simulator</title>
+  </head>
+  <body>
+    <div id="app-shell">
+      <canvas id="renderCanvas" aria-label="3D terrain hydrology simulator"></canvas>
+
+      <aside class="control-panel">
+        <div class="panel-header">
+          <p class="eyebrow">Realtime 3D Terrain Hydrology</p>
+          <h1>Water Simulator</h1>
+          <p class="panel-copy">
+            Procedural terrain, rainfall, downhill flow, lake pooling, and river
+            accumulation on a 128x128 simulation grid.
+          </p>
+        </div>
+
+        <section class="control-group">
+          <div class="button-row">
+            <button id="toggleSimulationButton" type="button">Pause</button>
+            <button id="resetSimulationButton" type="button">Reset</button>
+            <button id="regenerateTerrainButton" type="button">Regenerate</button>
+          </div>
+        </section>
+
+        <section class="control-group">
+          <label for="rainIntensityInput">Rain Intensity</label>
+          <div class="range-row">
+            <input
+              id="rainIntensityInput"
+              type="range"
+              min="0"
+              max="1.2"
+              step="0.01"
+              value="0.18"
+            />
+            <output id="rainIntensityValue">0.18</output>
+          </div>
+        </section>
+
+        <section class="control-group">
+          <label for="simulationSpeedInput">Simulation Speed</label>
+          <div class="range-row">
+            <input
+              id="simulationSpeedInput"
+              type="range"
+              min="0.25"
+              max="4"
+              step="0.25"
+              value="1"
+            />
+            <output id="simulationSpeedValue">1.00x</output>
+          </div>
+        </section>
+
+        <section class="control-group toggle-group">
+          <label class="toggle-row" for="riverViewInput">
+            <span>River View</span>
+            <input id="riverViewInput" type="checkbox" checked />
+          </label>
+          <label class="toggle-row" for="waterDepthViewInput">
+            <span>Water Depth View</span>
+            <input id="waterDepthViewInput" type="checkbox" checked />
+          </label>
+        </section>
+
+        <section class="control-group stats-grid">
+          <div>
+            <span class="stat-label">Seed</span>
+            <strong id="seedValue">-</strong>
+          </div>
+          <div>
+            <span class="stat-label">Sim Time</span>
+            <strong id="timeValue">0.0 s</strong>
+          </div>
+          <div>
+            <span class="stat-label">Water</span>
+            <strong id="waterValue">0.000</strong>
+          </div>
+          <div>
+            <span class="stat-label">Peak Flow</span>
+            <strong id="peakFlowValue">0.000</strong>
+          </div>
+        </section>
+      </aside>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
