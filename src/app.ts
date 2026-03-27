@@ -16,11 +16,9 @@ class TerrainHydrologyApp {
   private readonly terrainMeshRenderer;
   private readonly waterOverlayRenderer;
   private readonly controls;
-  private readonly fixedStepSeconds = 1 / 30;
 
   private isRunning = true;
   private simulationSpeed = 1;
-  private simulationAccumulator = 0;
   private statsAccumulator = 0;
   private viewOptions: WaterOverlayViewOptions = {
     showRivers: true,
@@ -77,41 +75,29 @@ class TerrainHydrologyApp {
 
   private resetSimulation(): void {
     this.simulation.reset();
-    this.simulationAccumulator = 0;
     this.terrainMeshRenderer.resetHydrologyResponse();
     this.controls.setStats(this.simulation.getStats());
   }
 
   private regenerateTerrain(): void {
     this.simulation.regenerate();
-    this.simulationAccumulator = 0;
     this.rebuildTerrainVisuals();
     this.controls.setStats(this.simulation.getStats());
   }
 
   private updateFrame(): void {
     const realDeltaSeconds = Math.min(this.sceneBundle.engine.getDeltaTime() / 1000, 0.1);
+    const simulatedDeltaSeconds = this.isRunning ? realDeltaSeconds * this.simulationSpeed : 0;
 
-    if (this.isRunning) {
-      this.simulationAccumulator += realDeltaSeconds * this.simulationSpeed;
-      let steps = 0;
-
-      while (this.simulationAccumulator >= this.fixedStepSeconds && steps < 10) {
-        this.simulation.step(this.fixedStepSeconds);
-        this.simulationAccumulator -= this.fixedStepSeconds;
-        steps += 1;
-      }
-
-      if (steps >= 10) {
-        this.simulationAccumulator = 0;
-      }
+    if (simulatedDeltaSeconds > 0) {
+      this.simulation.step(simulatedDeltaSeconds);
     }
 
     this.terrainMeshRenderer.updateHydrologyResponse(
       this.simulation.terrain,
       this.simulation.waterDepth,
       this.simulation.flowAccumulation,
-      realDeltaSeconds,
+      simulatedDeltaSeconds,
     );
 
     this.waterOverlayRenderer.update(

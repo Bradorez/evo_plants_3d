@@ -1,14 +1,25 @@
 import { ErosionModel } from "./Erosion";
-import { RainfallModel } from "./Rainfall";
 import { HydrologyModel } from "./Hydrology";
+import { RainfallModel } from "./Rainfall";
 import { recomputeTerrainBounds, TerrainData, TerrainGenerator } from "./Terrain";
 import { WaterBalanceModel } from "./WaterBalance";
+
+export interface SimulationSchedule {
+  hydrologyStepSeconds: number;
+  erosionStepSeconds: number;
+  slowProcessStepSeconds: number;
+  maxHydrologySubstepsPerAdvance: number;
+  maxErosionSubstepsPerAdvance: number;
+  maxSlowSubstepsPerAdvance: number;
+  maxAdvanceSeconds: number;
+}
 
 export interface SimulationOptions {
   resolution?: number;
   cellSize?: number;
   initialSeed?: number;
   initialRainIntensity?: number;
+  schedule?: Partial<SimulationSchedule>;
 }
 
 export interface SimulationStats {
@@ -19,28 +30,51 @@ export interface SimulationStats {
   rainIntensity: number;
 }
 
+const DEFAULT_SCHEDULE: SimulationSchedule = {
+  hydrologyStepSeconds: 1 / 30,
+  erosionStepSeconds: 1 / 6,
+  slowProcessStepSeconds: 0.5,
+  maxHydrologySubstepsPerAdvance: 10,
+  maxErosionSubstepsPerAdvance: 4,
+  maxSlowSubstepsPerAdvance: 2,
+  maxAdvanceSeconds: 0.2,
+};
+
 /**
- * Simulation coordinates terrain state, rainfall injection, and hydrology.
- * It exposes a compact API that the app and renderer can consume without
- * knowing how the underlying arrays are generated or updated.
+ * Simulation coordinates terrain, rainfall, hydrology, water sinks, erosion,
+ * and slower long-timescale terrain maintenance. The scheduler is explicit:
+ * - fast cadence: rainfall + hydrology + water balance
+ * - medium cadence: erosion/deposition
+ * - slow cadence: terrain settling / relaxation
+ *
+ * Rendering remains frame-based, but simulation advances by fixed internal
+ * steps so behavior is much less sensitive to render frame time.
  */
 export class Simulation {
   public terrain: TerrainData;
   public waterDepth: Float32Array;
   public readonly flowAccumulation: Float32Array;
   public readonly rainfall: RainfallModel;
+  public readonly schedule: SimulationSchedule;
 
   private hydrology: HydrologyModel;
   private erosion: ErosionModel;
   private readonly waterBalance: WaterBalanceModel;
   private elapsedTimeSeconds = 0;
   private peakFlow = 0;
+  private hydrologyAccumulator = 0;
+  private erosionAccumulator = 0;
+  private slowProcessAccumulator = 0;
   private readonly resolution: number;
   private readonly cellSize: number;
 
   public constructor(options: SimulationOptions = {}) {
     this.resolution = options.resolution ?? 128;
     this.cellSize = options.cellSize ?? 1;
+    this.schedule = {
+      ...DEFAULT_SCHEDULE,
+      ...options.schedule,
+    };
 
     this.terrain = TerrainGenerator.generate({
       resolution: this.resolution,
@@ -55,6 +89,7 @@ export class Simulation {
       this.terrain.seed,
       options.initialRainIntensity ?? 0.18,
     );
+
     this.hydrology = new HydrologyModel(
       this.terrain.grid,
       this.terrain.heights,
@@ -75,20 +110,23 @@ export class Simulation {
     return (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0;
   }
 
+  /**
+   * Advances the simulation by wall-clock time scaled by the caller. The method
+   * converts that delta into multiple fixed-step subsystem updates.
+   */
   public step(dtSeconds: number): void {
-    if (dtSeconds <= 0) {
+    if (!Number.isFinite(dtSeconds) || dtSeconds <= 0) {
       return;
     }
 
-    this.rainfall.apply(this.waterDepth, dtSeconds);
-    const hydrologyResult = this.hydrology.step(dtSeconds);
-    this.waterDepth = this.hydrology.getWaterDepth();
-    this.waterBalance.step(this.terrain, this.waterDepth, dtSeconds);
-    this.erosion.setWaterDepthBuffer(this.waterDepth);
-    this.erosion.step(dtSeconds, this.terrain);
-    recomputeTerrainBounds(this.terrain);
-    this.elapsedTimeSeconds += dtSeconds;
-    this.peakFlow = Math.max(this.peakFlow, hydrologyResult.maxAccumulation);
+    const clampedAdvance = Math.min(dtSeconds, this.schedule.maxAdvanceSeconds);
+    this.hydrologyAccumulator += clampedAdvance;
+    this.erosionAccumulator += clampedAdvance;
+    this.slowProcessAccumulator += clampedAdvance;
+
+    this.runHydrologyCadence();
+    this.runErosionCadence();
+    this.runSlowProcessCadence();
   }
 
   public reset(): void {
@@ -99,6 +137,9 @@ export class Simulation {
     this.flowAccumulation.fill(0);
     this.elapsedTimeSeconds = 0;
     this.peakFlow = 0;
+    this.hydrologyAccumulator = 0;
+    this.erosionAccumulator = 0;
+    this.slowProcessAccumulator = 0;
   }
 
   public regenerate(seed = Simulation.createSeed()): void {
@@ -112,6 +153,9 @@ export class Simulation {
     this.flowAccumulation.fill(0);
     this.elapsedTimeSeconds = 0;
     this.peakFlow = 0;
+    this.hydrologyAccumulator = 0;
+    this.erosionAccumulator = 0;
+    this.slowProcessAccumulator = 0;
 
     const nextRainfall = new RainfallModel(
       this.terrain.grid,
@@ -157,5 +201,90 @@ export class Simulation {
       peakFlow,
       rainIntensity: this.rainfall.getIntensity(),
     };
+  }
+
+  private runHydrologyCadence(): void {
+    let steps = 0;
+
+    while (
+      this.hydrologyAccumulator >= this.schedule.hydrologyStepSeconds &&
+      steps < this.schedule.maxHydrologySubstepsPerAdvance
+    ) {
+      this.runHydrologyStep(this.schedule.hydrologyStepSeconds);
+      this.hydrologyAccumulator -= this.schedule.hydrologyStepSeconds;
+      steps += 1;
+    }
+
+    if (steps >= this.schedule.maxHydrologySubstepsPerAdvance) {
+      this.hydrologyAccumulator = Math.min(
+        this.hydrologyAccumulator,
+        this.schedule.hydrologyStepSeconds,
+      );
+    }
+  }
+
+  private runErosionCadence(): void {
+    let steps = 0;
+
+    while (
+      this.erosionAccumulator >= this.schedule.erosionStepSeconds &&
+      steps < this.schedule.maxErosionSubstepsPerAdvance
+    ) {
+      this.runErosionStep(this.schedule.erosionStepSeconds);
+      this.erosionAccumulator -= this.schedule.erosionStepSeconds;
+      steps += 1;
+    }
+
+    if (steps >= this.schedule.maxErosionSubstepsPerAdvance) {
+      this.erosionAccumulator = Math.min(
+        this.erosionAccumulator,
+        this.schedule.erosionStepSeconds,
+      );
+    }
+  }
+
+  private runSlowProcessCadence(): void {
+    let steps = 0;
+
+    while (
+      this.slowProcessAccumulator >= this.schedule.slowProcessStepSeconds &&
+      steps < this.schedule.maxSlowSubstepsPerAdvance
+    ) {
+      this.runSlowProcessStep(this.schedule.slowProcessStepSeconds);
+      this.slowProcessAccumulator -= this.schedule.slowProcessStepSeconds;
+      steps += 1;
+    }
+
+    if (steps >= this.schedule.maxSlowSubstepsPerAdvance) {
+      this.slowProcessAccumulator = Math.min(
+        this.slowProcessAccumulator,
+        this.schedule.slowProcessStepSeconds,
+      );
+    }
+  }
+
+  private runHydrologyStep(stepSeconds: number): void {
+    this.rainfall.apply(this.waterDepth, stepSeconds);
+    const hydrologyResult = this.hydrology.step(stepSeconds);
+    this.waterDepth = this.hydrology.getWaterDepth();
+    this.waterBalance.step(this.terrain, this.waterDepth, stepSeconds);
+    this.erosion.setWaterDepthBuffer(this.waterDepth);
+    this.elapsedTimeSeconds += stepSeconds;
+    this.peakFlow = Math.max(this.peakFlow, hydrologyResult.maxAccumulation);
+  }
+
+  private runErosionStep(stepSeconds: number): void {
+    this.erosion.setWaterDepthBuffer(this.waterDepth);
+    this.erosion.step(stepSeconds, this.terrain);
+    recomputeTerrainBounds(this.terrain);
+  }
+
+  private runSlowProcessStep(stepSeconds: number): void {
+    this.erosion.setWaterDepthBuffer(this.waterDepth);
+    const settlingResult = this.erosion.settleTerrain(stepSeconds);
+
+    if (settlingResult.maxTerrainDelta > 0) {
+      recomputeTerrainBounds(this.terrain);
+    }
   }
 }

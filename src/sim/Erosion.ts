@@ -8,11 +8,17 @@ export interface ErosionSettings {
   sedimentCapacityFactor: number;
   sedimentTransportRate: number;
   maxTerrainDeltaPerTick: number;
+  settlingRate: number;
+  maxSettlingDeltaPerTick: number;
 }
 
 export interface ErosionStepResult {
   totalEroded: number;
   totalDeposited: number;
+  maxTerrainDelta: number;
+}
+
+export interface TerrainSettlingResult {
   maxTerrainDelta: number;
 }
 
@@ -52,6 +58,8 @@ export class ErosionModel {
     sedimentCapacityFactor: 0.02,
     sedimentTransportRate: 0.42,
     maxTerrainDeltaPerTick: 0.0012,
+    settlingRate: 0.09,
+    maxSettlingDeltaPerTick: 0.00045,
   };
 
   private readonly grid: Grid;
@@ -206,6 +214,82 @@ export class ErosionModel {
       totalDeposited,
       maxTerrainDelta,
     };
+  }
+
+  /**
+   * Slow terrain settling acts as a long-timescale clean-up pass. It does not
+   * compete with channel incision; it only nudges calm, mostly dry, low-flow
+   * cells toward their local neighborhood average to reduce isolated bumps or
+   * pits created by many tiny erosion/deposition steps.
+   */
+  public settleTerrain(dtSeconds: number): TerrainSettlingResult {
+    if (!Number.isFinite(dtSeconds) || dtSeconds <= 0) {
+      return { maxTerrainDelta: 0 };
+    }
+
+    const dtScale = dtSeconds / this.referenceStepSeconds;
+    const perTickLimit = this.settings.maxSettlingDeltaPerTick * dtScale;
+    const maxFlowIntensity = this.getMaxValue(this.flowIntensity);
+
+    this.terrainDelta.fill(0);
+    this.smoothedTerrainDelta.fill(0);
+
+    for (let y = 0; y < this.grid.height; y += 1) {
+      for (let x = 0; x < this.grid.width; x += 1) {
+        const index = this.grid.index(x, y);
+        const waterFactor = clamp(this.waterDepth[index] / 0.02, 0, 1);
+        const flowFactor = maxFlowIntensity > 0 ? this.flowIntensity[index] / maxFlowIntensity : 0;
+        const calmFactor = clamp(1 - Math.max(waterFactor, flowFactor), 0, 1);
+
+        if (calmFactor <= 0.15) {
+          continue;
+        }
+
+        let neighborSum = 0;
+        let neighborCount = 0;
+
+        for (const offset of CARDINAL_OFFSETS) {
+          const sampleX = x + offset.x;
+          const sampleY = y + offset.y;
+
+          if (!this.grid.isInside(sampleX, sampleY)) {
+            continue;
+          }
+
+          neighborSum += this.terrainHeights[this.grid.index(sampleX, sampleY)];
+          neighborCount += 1;
+        }
+
+        if (neighborCount === 0) {
+          continue;
+        }
+
+        const localAverage = neighborSum / neighborCount;
+        const heightDifference = localAverage - this.terrainHeights[index];
+
+        if (Math.abs(heightDifference) <= 1e-4) {
+          continue;
+        }
+
+        this.terrainDelta[index] = clamp(
+          heightDifference * this.settings.settlingRate * calmFactor * dtScale,
+          -perTickLimit,
+          perTickLimit,
+        );
+      }
+    }
+
+    this.smoothTerrainDelta();
+
+    let maxTerrainDelta = 0;
+
+    for (let index = 0; index < this.grid.cellCount; index += 1) {
+      const delta = clamp(this.smoothedTerrainDelta[index], -perTickLimit, perTickLimit);
+      this.terrainHeights[index] += delta;
+      maxTerrainDelta = Math.max(maxTerrainDelta, Math.abs(delta));
+    }
+
+    return { maxTerrainDelta };
   }
 
   private sampleSlope(x: number, y: number): number {
