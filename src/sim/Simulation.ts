@@ -24,7 +24,7 @@ export interface SimulationStats {
  */
 export class Simulation {
   public terrain: TerrainData;
-  public readonly waterDepth: Float32Array;
+  public waterDepth: Float32Array;
   public readonly flowAccumulation: Float32Array;
   public readonly rainfall: RainfallModel;
 
@@ -70,12 +70,14 @@ export class Simulation {
 
     this.rainfall.apply(this.waterDepth, dtSeconds);
     const hydrologyResult = this.hydrology.step(dtSeconds);
+    this.waterDepth = this.hydrology.getWaterDepth();
     this.elapsedTimeSeconds += dtSeconds;
     this.peakFlow = Math.max(this.peakFlow, hydrologyResult.maxAccumulation);
   }
 
   public reset(): void {
-    this.waterDepth.fill(0);
+    this.hydrology.reset();
+    this.waterDepth = this.hydrology.getWaterDepth();
     this.flowAccumulation.fill(0);
     this.elapsedTimeSeconds = 0;
     this.peakFlow = 0;
@@ -88,7 +90,7 @@ export class Simulation {
       seed,
     });
 
-    this.waterDepth.fill(0);
+    this.waterDepth = new Float32Array(this.terrain.grid.cellCount);
     this.flowAccumulation.fill(0);
     this.elapsedTimeSeconds = 0;
     this.peakFlow = 0;
@@ -106,6 +108,7 @@ export class Simulation {
       this.waterDepth,
       this.flowAccumulation,
     );
+    this.waterDepth = this.hydrology.getWaterDepth();
   }
 
   public setRainIntensity(intensity: number): void {
