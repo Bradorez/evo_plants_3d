@@ -15,9 +15,11 @@ export interface WaterOverlayViewOptions {
 }
 
 /**
- * WaterOverlayRenderer keeps a lightweight dynamic mesh above the terrain.
- * Only vertex positions and colors are updated per frame, which is much cheaper
- * than rebuilding topology while still making changing water surfaces readable.
+ * This renderer keeps a shared-vertex water surface so the result still reads
+ * as liquid, but it only triangulates cells that are actually wet enough to be
+ * visible. That removes the long diagonal artifacts from a full transparent
+ * terrain-sized sheet while avoiding the obvious square patches from isolated
+ * per-cell quads.
  */
 export class WaterOverlayRenderer {
   private readonly scene: Scene;
@@ -25,16 +27,21 @@ export class WaterOverlayRenderer {
   private mesh: Mesh | null = null;
   private positions = new Float32Array();
   private colors = new Float32Array();
+  private smoothedDepth = new Float32Array();
+  private smoothedFlow = new Float32Array();
+  private indexBuffer: number[] = [];
 
   public constructor(scene: Scene) {
     this.scene = scene;
     this.material = new StandardMaterial("water-overlay-material", scene);
     this.material.specularColor = Color3.Black();
     this.material.diffuseColor = Color3.White();
-    this.material.emissiveColor = new Color3(0.018, 0.08, 0.16);
+    this.material.emissiveColor = new Color3(0.02, 0.09, 0.18);
     this.material.alpha = 1;
     this.material.backFaceCulling = false;
     this.material.disableLighting = true;
+    this.material.needDepthPrePass = true;
+    this.material.separateCullingPass = true;
   }
 
   public rebuild(terrain: TerrainData): void {
@@ -45,11 +52,15 @@ export class WaterOverlayRenderer {
     const cellSize = terrain.cellSize;
     const halfWidth = (width - 1) * cellSize * 0.5;
     const halfHeight = (height - 1) * cellSize * 0.5;
+    const vertexCount = terrain.grid.cellCount;
 
-    this.positions = new Float32Array(width * height * 3);
-    this.colors = new Float32Array(width * height * 4);
-    const indices = new Uint32Array((width - 1) * (height - 1) * 6);
-    const normals = new Float32Array(width * height * 3);
+    this.positions = new Float32Array(vertexCount * 3);
+    this.colors = new Float32Array(vertexCount * 4);
+    this.smoothedDepth = new Float32Array(vertexCount);
+    this.smoothedFlow = new Float32Array(vertexCount);
+    this.indexBuffer = [];
+
+    const normals = new Float32Array(vertexCount * 3);
 
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {
@@ -57,7 +68,7 @@ export class WaterOverlayRenderer {
         const vertexOffset = index * 3;
 
         this.positions[vertexOffset] = x * cellSize - halfWidth;
-        this.positions[vertexOffset + 1] = terrain.heights[index] + 0.03;
+        this.positions[vertexOffset + 1] = terrain.heights[index] + 0.05;
         this.positions[vertexOffset + 2] = y * cellSize - halfHeight;
 
         normals[vertexOffset] = 0;
@@ -66,29 +77,10 @@ export class WaterOverlayRenderer {
       }
     }
 
-    let indexCursor = 0;
-
-    for (let y = 0; y < height - 1; y += 1) {
-      for (let x = 0; x < width - 1; x += 1) {
-        const topLeft = terrain.grid.index(x, y);
-        const topRight = terrain.grid.index(x + 1, y);
-        const bottomLeft = terrain.grid.index(x, y + 1);
-        const bottomRight = terrain.grid.index(x + 1, y + 1);
-
-        indices[indexCursor] = topLeft;
-        indices[indexCursor + 1] = bottomLeft;
-        indices[indexCursor + 2] = topRight;
-        indices[indexCursor + 3] = topRight;
-        indices[indexCursor + 4] = bottomLeft;
-        indices[indexCursor + 5] = bottomRight;
-        indexCursor += 6;
-      }
-    }
-
     const mesh = new Mesh("water-overlay-mesh", this.scene);
     const vertexData = new VertexData();
     vertexData.positions = Array.from(this.positions);
-    vertexData.indices = Array.from(indices);
+    vertexData.indices = [];
     vertexData.normals = Array.from(normals);
     vertexData.colors = Array.from(this.colors);
     vertexData.applyToMesh(mesh, true);
@@ -119,24 +111,28 @@ export class WaterOverlayRenderer {
       return;
     }
 
+    this.blurField(terrain, waterDepth, this.smoothedDepth);
+    this.blurField(terrain, flowAccumulation, this.smoothedFlow);
+    this.indexBuffer.length = 0;
+
     for (let index = 0; index < terrain.grid.cellCount; index += 1) {
       const vertexOffset = index * 3;
       const colorOffset = index * 4;
-      const depth = waterDepth[index];
-      const accumulation = flowAccumulation[index];
+
+      const depth = this.smoothedDepth[index];
+      const flow = this.smoothedFlow[index];
       const depthStrength = options.showWaterDepth
-        ? clamp((depth - 0.035) / 0.22, 0, 1)
+        ? clamp((depth - 0.012) / 0.16, 0, 1)
         : 0;
       const riverStrength = options.showRivers
-        ? clamp((Math.log1p(accumulation) - 5.1) / 2.2, 0, 1)
+        ? clamp((Math.log1p(flow) - 4.7) / 2.5, 0, 1)
         : 0;
-      const wetChannelStrength = riverStrength * clamp((depth - 0.012) / 0.08, 0, 1);
-      const visibleStrength = Math.max(depthStrength, wetChannelStrength);
-      const waterSurfaceLift = Math.max(depth, wetChannelStrength * 0.008);
+      const visibleStrength = Math.max(depthStrength, riverStrength * 0.72);
+      const waterLift = Math.max(depth, riverStrength * 0.012);
 
-      this.positions[vertexOffset + 1] = terrain.heights[index] + waterSurfaceLift + 0.03;
+      this.positions[vertexOffset + 1] = terrain.heights[index] + waterLift + 0.05;
 
-      if (visibleStrength < 0.18) {
+      if (visibleStrength < 0.08) {
         this.colors[colorOffset] = 0;
         this.colors[colorOffset + 1] = 0;
         this.colors[colorOffset + 2] = 0;
@@ -144,19 +140,75 @@ export class WaterOverlayRenderer {
         continue;
       }
 
-      const pooledWaterStrength = Math.max(depthStrength, wetChannelStrength);
-      const r = lerp(0.01, 0.035, wetChannelStrength);
-      const g = lerp(0.08, 0.24, clamp(wetChannelStrength * 0.9 + depthStrength * 0.16, 0, 1));
-      const b = lerp(0.24, 0.62, clamp(pooledWaterStrength * 0.92, 0, 1));
-      const alpha = clamp(depthStrength * 0.34 + wetChannelStrength * 0.2, 0.06, 0.36);
+      const pooledStrength = Math.max(depthStrength, riverStrength * 0.7);
+      this.colors[colorOffset] = lerp(0.02, 0.055, riverStrength);
+      this.colors[colorOffset + 1] = lerp(
+        0.11,
+        0.3,
+        clamp(riverStrength * 0.72 + depthStrength * 0.18, 0, 1),
+      );
+      this.colors[colorOffset + 2] = lerp(0.3, 0.72, clamp(pooledStrength * 0.9, 0, 1));
+      this.colors[colorOffset + 3] = clamp(depthStrength * 0.4 + riverStrength * 0.2, 0.1, 0.42);
+    }
 
-      this.colors[colorOffset] = r;
-      this.colors[colorOffset + 1] = g;
-      this.colors[colorOffset + 2] = b;
-      this.colors[colorOffset + 3] = alpha;
+    for (let y = 0; y < terrain.grid.height - 1; y += 1) {
+      for (let x = 0; x < terrain.grid.width - 1; x += 1) {
+        const topLeft = terrain.grid.index(x, y);
+        const topRight = terrain.grid.index(x + 1, y);
+        const bottomLeft = terrain.grid.index(x, y + 1);
+        const bottomRight = terrain.grid.index(x + 1, y + 1);
+
+        const cellVisibleStrength =
+          Math.max(
+            this.colors[topLeft * 4 + 3],
+            this.colors[topRight * 4 + 3],
+            this.colors[bottomLeft * 4 + 3],
+            this.colors[bottomRight * 4 + 3],
+          );
+
+        if (cellVisibleStrength < 0.09) {
+          continue;
+        }
+
+        this.indexBuffer.push(topLeft, bottomLeft, topRight, topRight, bottomLeft, bottomRight);
+      }
     }
 
     this.mesh.updateVerticesData(VertexBuffer.PositionKind, this.positions, false, false);
     this.mesh.updateVerticesData(VertexBuffer.ColorKind, this.colors, false, false);
+    this.mesh.setIndices(this.indexBuffer, undefined, true);
+  }
+
+  private blurField(terrain: TerrainData, source: Float32Array, target: Float32Array): void {
+    for (let y = 0; y < terrain.grid.height; y += 1) {
+      for (let x = 0; x < terrain.grid.width; x += 1) {
+        let weightSum = 0;
+        let valueSum = 0;
+
+        for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+          for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+            const sampleX = x + offsetX;
+            const sampleY = y + offsetY;
+
+            if (!terrain.grid.isInside(sampleX, sampleY)) {
+              continue;
+            }
+
+            const sampleIndex = terrain.grid.index(sampleX, sampleY);
+            const weight =
+              offsetX === 0 && offsetY === 0
+                ? 0.34
+                : offsetX === 0 || offsetY === 0
+                  ? 0.12
+                  : 0.045;
+
+            valueSum += source[sampleIndex] * weight;
+            weightSum += weight;
+          }
+        }
+
+        target[terrain.grid.index(x, y)] = weightSum > 0 ? valueSum / weightSum : 0;
+      }
+    }
   }
 }
