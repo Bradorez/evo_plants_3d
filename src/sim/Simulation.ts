@@ -1,6 +1,8 @@
+import { ErosionModel } from "./Erosion";
 import { RainfallModel } from "./Rainfall";
 import { HydrologyModel } from "./Hydrology";
-import { TerrainData, TerrainGenerator } from "./Terrain";
+import { recomputeTerrainBounds, TerrainData, TerrainGenerator } from "./Terrain";
+import { WaterBalanceModel } from "./WaterBalance";
 
 export interface SimulationOptions {
   resolution?: number;
@@ -29,6 +31,8 @@ export class Simulation {
   public readonly rainfall: RainfallModel;
 
   private hydrology: HydrologyModel;
+  private erosion: ErosionModel;
+  private readonly waterBalance: WaterBalanceModel;
   private elapsedTimeSeconds = 0;
   private peakFlow = 0;
   private readonly resolution: number;
@@ -57,6 +61,14 @@ export class Simulation {
       this.waterDepth,
       this.flowAccumulation,
     );
+    this.waterBalance = new WaterBalanceModel();
+    this.erosion = new ErosionModel(
+      this.terrain.grid,
+      this.terrain.heights,
+      this.waterDepth,
+      this.flowAccumulation,
+      this.hydrology.getFlowIntensity(),
+    );
   }
 
   public static createSeed(): number {
@@ -71,13 +83,19 @@ export class Simulation {
     this.rainfall.apply(this.waterDepth, dtSeconds);
     const hydrologyResult = this.hydrology.step(dtSeconds);
     this.waterDepth = this.hydrology.getWaterDepth();
+    this.waterBalance.step(this.terrain, this.waterDepth, dtSeconds);
+    this.erosion.setWaterDepthBuffer(this.waterDepth);
+    this.erosion.step(dtSeconds, this.terrain);
+    recomputeTerrainBounds(this.terrain);
     this.elapsedTimeSeconds += dtSeconds;
     this.peakFlow = Math.max(this.peakFlow, hydrologyResult.maxAccumulation);
   }
 
   public reset(): void {
     this.hydrology.reset();
+    this.erosion.reset();
     this.waterDepth = this.hydrology.getWaterDepth();
+    this.erosion.setWaterDepthBuffer(this.waterDepth);
     this.flowAccumulation.fill(0);
     this.elapsedTimeSeconds = 0;
     this.peakFlow = 0;
@@ -108,7 +126,15 @@ export class Simulation {
       this.waterDepth,
       this.flowAccumulation,
     );
+    this.erosion = new ErosionModel(
+      this.terrain.grid,
+      this.terrain.heights,
+      this.waterDepth,
+      this.flowAccumulation,
+      this.hydrology.getFlowIntensity(),
+    );
     this.waterDepth = this.hydrology.getWaterDepth();
+    this.erosion.setWaterDepthBuffer(this.waterDepth);
   }
 
   public setRainIntensity(intensity: number): void {

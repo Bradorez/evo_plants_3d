@@ -18,6 +18,25 @@ export interface TerrainOptions {
 }
 
 /**
+ * Terrain bounds are used by the renderer for elevation-dependent coloring and
+ * by the scene framing logic. Once erosion and deposition start mutating the
+ * heightfield at runtime, those bounds need to be recomputed incrementally.
+ */
+export function recomputeTerrainBounds(terrain: TerrainData): void {
+  let minHeight = Number.POSITIVE_INFINITY;
+  let maxHeight = Number.NEGATIVE_INFINITY;
+
+  for (let index = 0; index < terrain.heights.length; index += 1) {
+    const height = terrain.heights[index];
+    minHeight = Math.min(minHeight, height);
+    maxHeight = Math.max(maxHeight, height);
+  }
+
+  terrain.minHeight = minHeight;
+  terrain.maxHeight = maxHeight;
+}
+
+/**
  * The terrain system owns heightmap generation only.
  * It produces a stable procedural landscape for the hydrology solver and the
  * renderer, but does not know anything about water or Babylon.js meshes.
@@ -66,25 +85,22 @@ export class TerrainGenerator {
       }
     }
 
-    let minHeight = Number.POSITIVE_INFINITY;
-    let maxHeight = Number.NEGATIVE_INFINITY;
-
     for (let index = 0; index < heights.length; index += 1) {
       const normalized = inverseLerp(rawMin, rawMax, heights[index]);
       const shaped = Math.pow(normalized, 1.16);
       const scaled = shaped * 24;
       heights[index] = scaled;
-      minHeight = Math.min(minHeight, scaled);
-      maxHeight = Math.max(maxHeight, scaled);
     }
 
-    return {
+    const terrain: TerrainData = {
       seed: featureSeed,
       grid,
       cellSize: options.cellSize,
       heights,
-      minHeight,
-      maxHeight,
+      minHeight: 0,
+      maxHeight: 0,
     };
+    recomputeTerrainBounds(terrain);
+    return terrain;
   }
 }

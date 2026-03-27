@@ -30,6 +30,7 @@ export class TerrainMeshRenderer {
 
   private mesh: Mesh | null = null;
   private occluderMesh: Mesh | null = null;
+  private bottomY = 0;
 
   private topVertexCount = 0;
   private perimeterTopStart = 0;
@@ -88,6 +89,7 @@ export class TerrainMeshRenderer {
     this.perimeterLength = edgeRingVertexCount;
     this.perimeterTopStart = topVertexCount + bottomVertexCount;
     this.perimeterBottomStart = this.perimeterTopStart + edgeRingVertexCount;
+    this.bottomY = bottomY;
 
     this.basePositions = new Float32Array(totalVertexCount * 3);
     this.dynamicPositions = new Float32Array(totalVertexCount * 3);
@@ -333,6 +335,7 @@ export class TerrainMeshRenderer {
       return;
     }
 
+    this.syncTerrainBase(terrain);
     this.dynamicPositions.set(this.basePositions);
     this.dynamicColors.set(this.baseColors);
     this.occluderPositions.set(this.basePositions);
@@ -451,6 +454,69 @@ export class TerrainMeshRenderer {
     for (let perimeterOffset = 0; perimeterOffset < this.perimeterLength; perimeterOffset += 1) {
       const perimeterTopIndex = this.perimeterTopStart + perimeterOffset;
       this.occluderPositions[perimeterTopIndex * 3 + 1] += this.occluderLift;
+    }
+  }
+
+  /**
+   * Terrain heights become dynamic once erosion/deposition is active. This
+   * refresh keeps the render-side base geometry, dry colors, and closed volume
+   * aligned with the current simulation terrain before hydrology tinting is
+   * layered on top.
+   */
+  private syncTerrainBase(terrain: TerrainData): void {
+    this.bottomY = terrain.minHeight - 18;
+
+    for (let index = 0; index < this.topVertexCount; index += 1) {
+      const positionOffset = index * 3;
+      const colorOffset = index * 4;
+      const x = index % terrain.grid.width;
+      const y = Math.floor(index / terrain.grid.width);
+      const elevation = terrain.heights[index];
+      const slope = this.sampleSlope(terrain, x, y);
+      const normalizedElevation = inverseLerp(terrain.minHeight, terrain.maxHeight, elevation);
+      const color = this.getDryTerrainColor(normalizedElevation, slope);
+
+      this.baseTopHeights[index] = elevation;
+      this.elevationField[index] = normalizedElevation;
+      this.slopeField[index] = slope;
+
+      this.basePositions[positionOffset + 1] = elevation;
+      this.baseColors[colorOffset] = color[0];
+      this.baseColors[colorOffset + 1] = color[1];
+      this.baseColors[colorOffset + 2] = color[2];
+      this.baseColors[colorOffset + 3] = 1;
+
+      const bottomIndex = this.topVertexCount + index;
+      const bottomPositionOffset = bottomIndex * 3;
+      const bottomColorOffset = bottomIndex * 4;
+
+      this.basePositions[bottomPositionOffset + 1] = this.bottomY;
+      this.baseColors[bottomColorOffset] = color[0] * 0.72;
+      this.baseColors[bottomColorOffset + 1] = color[1] * 0.72;
+      this.baseColors[bottomColorOffset + 2] = color[2] * 0.72;
+      this.baseColors[bottomColorOffset + 3] = 1;
+
+      const perimeterCopyIndex = this.topToPerimeterCopy[index];
+      if (perimeterCopyIndex >= 0) {
+        const perimeterTopOffset = perimeterCopyIndex * 3;
+        const perimeterTopColorOffset = perimeterCopyIndex * 4;
+        const perimeterBottomIndex = this.perimeterBottomStart + (perimeterCopyIndex - this.perimeterTopStart);
+        const perimeterBottomOffset = perimeterBottomIndex * 3;
+        const perimeterBottomColorOffset = perimeterBottomIndex * 4;
+
+        this.basePositions[perimeterTopOffset + 1] = elevation;
+        this.basePositions[perimeterBottomOffset + 1] = this.bottomY;
+
+        this.baseColors[perimeterTopColorOffset] = color[0];
+        this.baseColors[perimeterTopColorOffset + 1] = color[1];
+        this.baseColors[perimeterTopColorOffset + 2] = color[2];
+        this.baseColors[perimeterTopColorOffset + 3] = 1;
+
+        this.baseColors[perimeterBottomColorOffset] = color[0] * 0.7;
+        this.baseColors[perimeterBottomColorOffset + 1] = color[1] * 0.7;
+        this.baseColors[perimeterBottomColorOffset + 2] = color[2] * 0.7;
+        this.baseColors[perimeterBottomColorOffset + 3] = 1;
+      }
     }
   }
 

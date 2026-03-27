@@ -42,6 +42,7 @@ export class HydrologyModel {
   private readonly grid: Grid;
   private readonly terrainHeights: Float32Array;
   private readonly flowAccumulation: Float32Array;
+  private readonly flowIntensity: Float32Array;
   private readonly surfaceHeights: Float32Array;
   private readonly outgoingFlow: Float32Array;
   private readonly neighborIndices = new Int32Array(8);
@@ -61,6 +62,8 @@ export class HydrologyModel {
   private readonly referenceStepSeconds = 1 / 30;
   private readonly minWaterDepth = 1e-6;
   private readonly maxSafeWaterDepth = 1e6;
+  private readonly flowMemoryRise = 0.22;
+  private readonly flowMemoryDecay = 0.08;
 
   public constructor(
     grid: Grid,
@@ -73,6 +76,7 @@ export class HydrologyModel {
     this.flowAccumulation = flowAccumulation;
     this.currentWater = initialWaterDepth;
     this.nextWater = new Float32Array(grid.cellCount);
+    this.flowIntensity = new Float32Array(grid.cellCount);
     this.surfaceHeights = new Float32Array(grid.cellCount);
     this.outgoingFlow = new Float32Array(grid.cellCount);
   }
@@ -81,9 +85,14 @@ export class HydrologyModel {
     return this.currentWater;
   }
 
+  public getFlowIntensity(): Float32Array {
+    return this.flowIntensity;
+  }
+
   public reset(): void {
     this.currentWater.fill(0);
     this.nextWater.fill(0);
+    this.flowIntensity.fill(0);
     this.outgoingFlow.fill(0);
   }
 
@@ -215,6 +224,8 @@ export class HydrologyModel {
     }
 
     let maxAccumulation = 0;
+    const riseBlend = Math.min(1, this.flowMemoryRise * (dtSeconds / this.referenceStepSeconds));
+    const decayBlend = Math.min(1, this.flowMemoryDecay * (dtSeconds / this.referenceStepSeconds));
 
     for (let index = 0; index < this.grid.cellCount; index += 1) {
       const clampedWater = this.sanitizeWaterValue(this.nextWater[index]);
@@ -223,6 +234,10 @@ export class HydrologyModel {
       const accumulationIncrement = this.outgoingFlow[index] / Math.max(dtSeconds, 1e-6);
       const nextAccumulation = this.flowAccumulation[index] + accumulationIncrement;
       this.flowAccumulation[index] = Number.isFinite(nextAccumulation) ? nextAccumulation : 0;
+      const previousFlow = this.flowIntensity[index];
+      const currentFlow = Number.isFinite(accumulationIncrement) ? accumulationIncrement : 0;
+      const blend = currentFlow >= previousFlow ? riseBlend : decayBlend;
+      this.flowIntensity[index] = previousFlow + (currentFlow - previousFlow) * blend;
       maxAccumulation = Math.max(maxAccumulation, this.flowAccumulation[index]);
     }
 
