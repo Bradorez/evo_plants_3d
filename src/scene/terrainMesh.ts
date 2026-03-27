@@ -16,32 +16,45 @@ import type { Scene } from "@babylonjs/core";
 export class TerrainMeshRenderer {
   private readonly scene: Scene;
   private readonly material: StandardMaterial;
+  private readonly occluderMaterial: StandardMaterial;
   private mesh: Mesh | null = null;
+  private occluderMesh: Mesh | null = null;
 
   public constructor(scene: Scene) {
     this.scene = scene;
     this.material = new StandardMaterial("terrain-material", scene);
-    // Keep the terrain visible even if future mesh edits accidentally disturb
-    // winding order again. The primary fix is the corrected index winding
-    // below, but disabling back-face culling makes the terrain more robust.
-    this.material.backFaceCulling = false;
+    this.material.backFaceCulling = true;
     this.material.specularColor = Color3.Black();
     this.material.diffuseColor = new Color3(0.98, 0.89, 0.76);
     this.material.emissiveColor = new Color3(0.018, 0.012, 0.008);
+
+    // Depth-only occluder used to ensure hidden water never leaks through the
+    // terrain volume due to transparency sorting or the small render lift on
+    // the water surface.
+    this.occluderMaterial = new StandardMaterial("terrain-occluder-material", scene);
+    this.occluderMaterial.disableColorWrite = true;
+    this.occluderMaterial.backFaceCulling = false;
+    this.occluderMaterial.forceDepthWrite = true;
   }
 
   public rebuild(terrain: TerrainData): Mesh {
     this.mesh?.dispose();
+    this.occluderMesh?.dispose();
 
     const width = terrain.grid.width;
     const height = terrain.grid.height;
     const cellSize = terrain.cellSize;
     const halfWidth = (width - 1) * cellSize * 0.5;
     const halfHeight = (height - 1) * cellSize * 0.5;
+    const topVertexCount = width * height;
+    const bottomVertexCount = topVertexCount;
+    const edgeRingVertexCount = width * 2 + Math.max(height - 2, 0) * 2;
+    const totalVertexCount = topVertexCount + bottomVertexCount + edgeRingVertexCount * 2;
+    const bottomY = terrain.minHeight - 18;
 
-    const positions = new Float32Array(width * height * 3);
-    const colors = new Float32Array(width * height * 4);
-    const indices = new Uint32Array((width - 1) * (height - 1) * 6);
+    const positions = new Float32Array(totalVertexCount * 3);
+    const colors = new Float32Array(totalVertexCount * 4);
+    const indices: number[] = [];
 
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {
@@ -66,7 +79,24 @@ export class TerrainMeshRenderer {
       }
     }
 
-    let indexCursor = 0;
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const topIndex = terrain.grid.index(x, y);
+        const bottomIndex = topVertexCount + topIndex;
+        const topColorOffset = topIndex * 4;
+        const bottomColorOffset = bottomIndex * 4;
+        const bottomVertexOffset = bottomIndex * 3;
+
+        positions[bottomVertexOffset] = positions[topIndex * 3];
+        positions[bottomVertexOffset + 1] = bottomY;
+        positions[bottomVertexOffset + 2] = positions[topIndex * 3 + 2];
+
+        colors[bottomColorOffset] = colors[topColorOffset] * 0.72;
+        colors[bottomColorOffset + 1] = colors[topColorOffset + 1] * 0.72;
+        colors[bottomColorOffset + 2] = colors[topColorOffset + 2] * 0.72;
+        colors[bottomColorOffset + 3] = 1;
+      }
+    }
 
     for (let y = 0; y < height - 1; y += 1) {
       for (let x = 0; x < width - 1; x += 1) {
@@ -79,23 +109,85 @@ export class TerrainMeshRenderer {
         // viewed from above. The previous winding produced backfaces on the
         // playable side of the terrain, which made the ground appear
         // transparent from the normal orbit angle.
-        indices[indexCursor] = topLeft;
-        indices[indexCursor + 1] = topRight;
-        indices[indexCursor + 2] = bottomLeft;
-        indices[indexCursor + 3] = topRight;
-        indices[indexCursor + 4] = bottomRight;
-        indices[indexCursor + 5] = bottomLeft;
-        indexCursor += 6;
+        indices.push(topLeft, topRight, bottomLeft, topRight, bottomRight, bottomLeft);
+
+        const baseBottomLeft = topVertexCount + bottomLeft;
+        const baseBottomRight = topVertexCount + bottomRight;
+        const baseTopLeft = topVertexCount + topLeft;
+        const baseTopRight = topVertexCount + topRight;
+        indices.push(baseTopLeft, baseBottomLeft, baseTopRight, baseTopRight, baseBottomLeft, baseBottomRight);
       }
     }
 
+    const perimeterTopIndices: number[] = [];
+
+    for (let x = 0; x < width; x += 1) {
+      perimeterTopIndices.push(terrain.grid.index(x, 0));
+    }
+
+    for (let y = 1; y < height - 1; y += 1) {
+      perimeterTopIndices.push(terrain.grid.index(width - 1, y));
+    }
+
+    for (let x = width - 1; x >= 0; x -= 1) {
+      perimeterTopIndices.push(terrain.grid.index(x, height - 1));
+    }
+
+    for (let y = height - 2; y >= 1; y -= 1) {
+      perimeterTopIndices.push(terrain.grid.index(0, y));
+    }
+
+    const perimeterLength = perimeterTopIndices.length;
+    const perimeterTopStart = topVertexCount + bottomVertexCount;
+    const perimeterBottomStart = perimeterTopStart + perimeterLength;
+
+    for (let perimeterOffset = 0; perimeterOffset < perimeterLength; perimeterOffset += 1) {
+      const sourceTopIndex = perimeterTopIndices[perimeterOffset];
+      const sourceTopOffset = sourceTopIndex * 3;
+      const topCopyIndex = perimeterTopStart + perimeterOffset;
+      const bottomCopyIndex = perimeterBottomStart + perimeterOffset;
+      const topCopyOffset = topCopyIndex * 3;
+      const bottomCopyOffset = bottomCopyIndex * 3;
+      const sourceColorOffset = sourceTopIndex * 4;
+      const topCopyColorOffset = topCopyIndex * 4;
+      const bottomCopyColorOffset = bottomCopyIndex * 4;
+
+      positions[topCopyOffset] = positions[sourceTopOffset];
+      positions[topCopyOffset + 1] = positions[sourceTopOffset + 1];
+      positions[topCopyOffset + 2] = positions[sourceTopOffset + 2];
+
+      positions[bottomCopyOffset] = positions[sourceTopOffset];
+      positions[bottomCopyOffset + 1] = bottomY;
+      positions[bottomCopyOffset + 2] = positions[sourceTopOffset + 2];
+
+      colors[topCopyColorOffset] = colors[sourceColorOffset];
+      colors[topCopyColorOffset + 1] = colors[sourceColorOffset + 1];
+      colors[topCopyColorOffset + 2] = colors[sourceColorOffset + 2];
+      colors[topCopyColorOffset + 3] = 1;
+
+      colors[bottomCopyColorOffset] = colors[sourceColorOffset] * 0.7;
+      colors[bottomCopyColorOffset + 1] = colors[sourceColorOffset + 1] * 0.7;
+      colors[bottomCopyColorOffset + 2] = colors[sourceColorOffset + 2] * 0.7;
+      colors[bottomCopyColorOffset + 3] = 1;
+    }
+
+    for (let perimeterOffset = 0; perimeterOffset < perimeterLength; perimeterOffset += 1) {
+      const nextOffset = (perimeterOffset + 1) % perimeterLength;
+      const currentTop = perimeterTopStart + perimeterOffset;
+      const nextTop = perimeterTopStart + nextOffset;
+      const currentBottom = perimeterBottomStart + perimeterOffset;
+      const nextBottom = perimeterBottomStart + nextOffset;
+
+      indices.push(currentTop, currentBottom, nextTop, nextTop, currentBottom, nextBottom);
+    }
+
     const normals: number[] = [];
-    VertexData.ComputeNormals(Array.from(positions), Array.from(indices), normals);
+    VertexData.ComputeNormals(Array.from(positions), indices, normals);
 
     const mesh = new Mesh("terrain-mesh", this.scene);
     const vertexData = new VertexData();
     vertexData.positions = Array.from(positions);
-    vertexData.indices = Array.from(indices);
+    vertexData.indices = indices;
     vertexData.normals = normals;
     vertexData.colors = Array.from(colors);
     vertexData.applyToMesh(mesh, false);
@@ -105,7 +197,33 @@ export class TerrainMeshRenderer {
     mesh.isPickable = false;
     mesh.useVertexColors = true;
 
+    const occluderPositions = Array.from(positions);
+
+    for (let topIndex = 0; topIndex < topVertexCount; topIndex += 1) {
+      occluderPositions[topIndex * 3 + 1] += 0.035;
+    }
+
+    for (let perimeterOffset = 0; perimeterOffset < perimeterLength; perimeterOffset += 1) {
+      const perimeterTopIndex = perimeterTopStart + perimeterOffset;
+      occluderPositions[perimeterTopIndex * 3 + 1] += 0.035;
+    }
+
+    const occluderNormals: number[] = [];
+    VertexData.ComputeNormals(occluderPositions, indices, occluderNormals);
+
+    const occluderMesh = new Mesh("terrain-occluder-mesh", this.scene);
+    const occluderVertexData = new VertexData();
+    occluderVertexData.positions = occluderPositions;
+    occluderVertexData.indices = indices;
+    occluderVertexData.normals = occluderNormals;
+    occluderVertexData.applyToMesh(occluderMesh, false);
+
+    occluderMesh.material = this.occluderMaterial;
+    occluderMesh.isPickable = false;
+    occluderMesh.renderingGroupId = 0;
+
     this.mesh = mesh;
+    this.occluderMesh = occluderMesh;
     return mesh;
   }
 
