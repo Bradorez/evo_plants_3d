@@ -54,7 +54,8 @@ export class TerrainMeshRenderer {
   private baseTopHeights = new Float32Array();
   private elevationField = new Float32Array();
   private slopeField = new Float32Array();
-  private rockExposureField = new Float32Array();
+  private coarseSurfaceField = new Float32Array();
+  private bedrockExposureField = new Float32Array();
   private topToPerimeterCopy = new Int32Array();
 
   private waterSignal = new Float32Array();
@@ -109,7 +110,8 @@ export class TerrainMeshRenderer {
     this.baseTopHeights = new Float32Array(topVertexCount);
     this.elevationField = new Float32Array(topVertexCount);
     this.slopeField = new Float32Array(topVertexCount);
-    this.rockExposureField = new Float32Array(topVertexCount);
+    this.coarseSurfaceField = new Float32Array(topVertexCount);
+    this.bedrockExposureField = new Float32Array(topVertexCount);
     this.topToPerimeterCopy = new Int32Array(topVertexCount);
     this.topToPerimeterCopy.fill(-1);
 
@@ -128,13 +130,25 @@ export class TerrainMeshRenderer {
         const elevation = terrain.heights[index];
         const slope = this.sampleSlope(terrain, x, y);
         const normalizedElevation = inverseLerp(terrain.minHeight, terrain.maxHeight, elevation);
-        const rockExposure = this.getRockExposure(terrain, index, slope);
-        const color = this.getDryTerrainColor(normalizedElevation, slope, rockExposure);
+        const coarseSurface = this.getCoarseSurfaceSignal(terrain, index, slope);
+        const bedrockExposure = this.getBedrockExposureSignal(
+          terrain,
+          index,
+          slope,
+          coarseSurface,
+        );
+        const color = this.getDryTerrainColor(
+          normalizedElevation,
+          slope,
+          coarseSurface,
+          bedrockExposure,
+        );
 
         this.baseTopHeights[index] = elevation;
         this.elevationField[index] = normalizedElevation;
         this.slopeField[index] = slope;
-        this.rockExposureField[index] = rockExposure;
+        this.coarseSurfaceField[index] = coarseSurface;
+        this.bedrockExposureField[index] = bedrockExposure;
 
         this.basePositions[positionOffset] = x * cellSize - halfWidth;
         this.basePositions[positionOffset + 1] = elevation;
@@ -445,7 +459,8 @@ export class TerrainMeshRenderer {
       const hydrologyColor = this.getHydrologyTintedColor(
         this.elevationField[index],
         slope,
-        this.rockExposureField[index],
+        this.coarseSurfaceField[index],
+        this.bedrockExposureField[index],
         wetness,
         saturation,
         shoreline,
@@ -551,13 +566,25 @@ export class TerrainMeshRenderer {
       const elevation = terrain.heights[index];
       const slope = this.sampleSlope(terrain, x, y);
       const normalizedElevation = inverseLerp(terrain.minHeight, terrain.maxHeight, elevation);
-      const rockExposure = this.getRockExposure(terrain, index, slope);
-      const color = this.getDryTerrainColor(normalizedElevation, slope, rockExposure);
+      const coarseSurface = this.getCoarseSurfaceSignal(terrain, index, slope);
+      const bedrockExposure = this.getBedrockExposureSignal(
+        terrain,
+        index,
+        slope,
+        coarseSurface,
+      );
+      const color = this.getDryTerrainColor(
+        normalizedElevation,
+        slope,
+        coarseSurface,
+        bedrockExposure,
+      );
 
       this.baseTopHeights[index] = elevation;
       this.elevationField[index] = normalizedElevation;
       this.slopeField[index] = slope;
-      this.rockExposureField[index] = rockExposure;
+      this.coarseSurfaceField[index] = coarseSurface;
+      this.bedrockExposureField[index] = bedrockExposure;
 
       this.basePositions[positionOffset + 1] = elevation;
       this.baseColors[colorOffset] = color[0];
@@ -653,14 +680,15 @@ export class TerrainMeshRenderer {
   private getDryTerrainColor(
     elevation: number,
     slope: number,
-    rockExposure: number,
+    coarseSurface: number,
+    bedrockExposure: number,
   ): [number, number, number] {
     const low = [0.34, 0.23, 0.15] as const;
     const mids = [0.5, 0.35, 0.23] as const;
     const high = [0.64, 0.48, 0.33] as const;
     const peak = [0.78, 0.63, 0.47] as const;
-    const rock = [0.4, 0.39, 0.37] as const;
-    const exposedRock = [0.56, 0.55, 0.53] as const;
+    const coarseDeposit = [0.46, 0.44, 0.4] as const;
+    const bedrock = [0.58, 0.58, 0.6] as const;
 
     let r = 0;
     let g = 0;
@@ -683,17 +711,22 @@ export class TerrainMeshRenderer {
       b = lerp(high[2], peak[2], t);
     }
 
-    const rockBlend = Math.min(1, slope * 1.45);
-    r = lerp(r, rock[0], rockBlend);
-    g = lerp(g, rock[1], rockBlend);
-    b = lerp(b, rock[2], rockBlend);
+    const slopeStoneBlend = Math.min(1, slope * 1.2);
+    r = lerp(r, coarseDeposit[0], slopeStoneBlend * 0.34);
+    g = lerp(g, coarseDeposit[1], slopeStoneBlend * 0.34);
+    b = lerp(b, coarseDeposit[2], slopeStoneBlend * 0.34);
 
-    const exposureBlend = clamp(Math.pow(rockExposure, 0.82), 0, 1);
-    r = lerp(r, exposedRock[0], exposureBlend);
-    g = lerp(g, exposedRock[1], exposureBlend);
-    b = lerp(b, exposedRock[2], exposureBlend);
+    const coarseBlend = clamp(Math.pow(coarseSurface, 0.85), 0, 0.92);
+    r = lerp(r, coarseDeposit[0], coarseBlend);
+    g = lerp(g, coarseDeposit[1], coarseBlend);
+    b = lerp(b, coarseDeposit[2], coarseBlend);
 
-    const shade = 1 - slope * 0.11 + rockExposure * 0.06;
+    const bedrockBlend = clamp(Math.pow(bedrockExposure, 0.9), 0, 1);
+    r = lerp(r, bedrock[0], bedrockBlend);
+    g = lerp(g, bedrock[1], bedrockBlend);
+    b = lerp(b, bedrock[2], bedrockBlend);
+
+    const shade = 1 - slope * 0.11 + coarseSurface * 0.04 + bedrockExposure * 0.07;
     return [r * shade, g * shade, b * shade];
   }
 
@@ -705,7 +738,8 @@ export class TerrainMeshRenderer {
   private getHydrologyTintedColor(
     elevation: number,
     slope: number,
-    rockExposure: number,
+    coarseSurface: number,
+    bedrockExposure: number,
     wetness: number,
     saturation: number,
     shoreline: number,
@@ -713,12 +747,13 @@ export class TerrainMeshRenderer {
     ecologicalMoisture: number,
     floodMemory: number,
   ): [number, number, number] {
-    const base = this.getDryTerrainColor(elevation, slope, rockExposure);
+    const base = this.getDryTerrainColor(elevation, slope, coarseSurface, bedrockExposure);
     const damp = [0.28, 0.21, 0.14] as const;
     const saturated = [0.2, 0.16, 0.12] as const;
     const shorelineTint = [0.34, 0.27, 0.17] as const;
     const channelTint = [0.18, 0.145, 0.115] as const;
-    const channelStoneTint = [0.34, 0.35, 0.36] as const;
+    const channelStoneTint = [0.36, 0.36, 0.35] as const;
+    const bedrockTint = [0.4, 0.4, 0.42] as const;
     const ecologicalTint = [0.22, 0.245, 0.16] as const;
     const floodTint = [0.16, 0.2, 0.18] as const;
 
@@ -743,13 +778,22 @@ export class TerrainMeshRenderer {
     b = lerp(b, channelTint[2], persistentChannel * 0.55);
 
     const stonyChannelBlend = clamp(
-      rockExposure * (persistentChannel * 0.5 + shoreline * 0.2 + wetness * 0.1),
+      coarseSurface * (persistentChannel * 0.55 + shoreline * 0.24 + wetness * 0.1),
       0,
-      0.48,
+      0.62,
     );
     r = lerp(r, channelStoneTint[0], stonyChannelBlend);
     g = lerp(g, channelStoneTint[1], stonyChannelBlend);
     b = lerp(b, channelStoneTint[2], stonyChannelBlend);
+
+    const bedrockBlend = clamp(
+      bedrockExposure * (persistentChannel * 0.35 + shoreline * 0.2 + wetness * 0.08),
+      0,
+      0.42,
+    );
+    r = lerp(r, bedrockTint[0], bedrockBlend);
+    g = lerp(g, bedrockTint[1], bedrockBlend);
+    b = lerp(b, bedrockTint[2], bedrockBlend);
 
     r = lerp(r, ecologicalTint[0], ecologicalMoisture * 0.24);
     g = lerp(g, ecologicalTint[1], ecologicalMoisture * 0.24);
@@ -778,11 +822,22 @@ export class TerrainMeshRenderer {
    * Thin soil, coarse-rich cells, and steep faces all push the surface toward
    * visibly rockier colors.
    */
-  private getRockExposure(terrain: TerrainData, index: number, slope: number): number {
+  private getCoarseSurfaceSignal(terrain: TerrainData, index: number, slope: number): number {
     const soilDepth = terrain.soilDepth[index];
-    const coarseRock = terrain.coarseRock[index];
-    const thinSoilExposure = clamp((1.15 - soilDepth) / 1.15, 0, 1);
-    return clamp(coarseRock * 0.64 + thinSoilExposure * 0.38 + slope * 0.16, 0, 1);
+    const coarseDepth = terrain.coarseRock[index];
+    const thinSoilExposure = clamp((0.95 - soilDepth) / 0.95, 0, 1);
+    return clamp((coarseDepth / 0.42) * 0.72 + thinSoilExposure * 0.22 + slope * 0.08, 0, 1);
+  }
+
+  private getBedrockExposureSignal(
+    terrain: TerrainData,
+    index: number,
+    slope: number,
+    coarseSurface: number,
+  ): number {
+    const soilDepth = terrain.soilDepth[index];
+    const thinSoilExposure = clamp((0.36 - soilDepth) / 0.36, 0, 1);
+    return clamp(thinSoilExposure * (1 - coarseSurface * 0.88) + slope * 0.12, 0, 1);
   }
 
   /**

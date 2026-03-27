@@ -270,6 +270,18 @@ export class Simulation {
     return this.vegetation.getDebugSummary();
   }
 
+  public getMaterialResistanceField(): Float32Array {
+    return this.erosion.getMaterialResistanceField();
+  }
+
+  public getArmoringField(): Float32Array {
+    return this.erosion.getArmoringField();
+  }
+
+  public getSpillwayResistanceField(): Float32Array {
+    return this.erosion.getSpillwayResistanceField();
+  }
+
   public getStats(): SimulationStats {
     let totalWater = 0;
     let peakFlow = 0;

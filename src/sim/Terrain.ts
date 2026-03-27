@@ -23,8 +23,8 @@ export interface TerrainOptions {
 export const TERRAIN_MATERIAL_SETTINGS = {
   initialSoilDepthMin: 0.25,
   initialSoilDepthMax: 1.8,
-  initialRockinessMin: 0.05,
-  initialRockinessMax: 0.95,
+  initialCoarseDepthMin: 0.03,
+  initialCoarseDepthMax: 0.72,
 } as const;
 
 /**
@@ -114,20 +114,38 @@ export class TerrainGenerator {
         const rockNoise = valueNoise2D(x * 0.13 - 7.4, y * 0.13 + 6.1, featureSeed + 8129);
         const valleyRetention = clamp((1 - slope) * 0.55 + (1 - normalizedElevation) * 0.28 + soilNoise * 0.17, 0, 1);
         const rockyExposure = clamp(slope * 0.48 + normalizedElevation * 0.22 + rockNoise * 0.3, 0, 1);
-        const cellSoilDepth = lerp(
+        let cellSoilDepth = lerp(
           TERRAIN_MATERIAL_SETTINGS.initialSoilDepthMin,
           TERRAIN_MATERIAL_SETTINGS.initialSoilDepthMax,
           valleyRetention * (1 - rockyExposure * 0.45),
         );
-
-        soilDepth[index] = clamp(cellSoilDepth, TERRAIN_MATERIAL_SETTINGS.initialSoilDepthMin, TERRAIN_MATERIAL_SETTINGS.initialSoilDepthMax);
-        coarseRock[index] = lerp(
-          TERRAIN_MATERIAL_SETTINGS.initialRockinessMin,
-          TERRAIN_MATERIAL_SETTINGS.initialRockinessMax,
-          rockyExposure,
+        let cellCoarseDepth = lerp(
+          TERRAIN_MATERIAL_SETTINGS.initialCoarseDepthMin,
+          TERRAIN_MATERIAL_SETTINGS.initialCoarseDepthMax,
+          rockyExposure * (0.72 + slope * 0.28),
         );
-        bedrockHeights[index] = Math.max(0, heights[index] - soilDepth[index]);
-        heights[index] = bedrockHeights[index] + soilDepth[index];
+
+        const totalSurfaceMaterial = cellSoilDepth + cellCoarseDepth;
+        const availableSurfaceMaterial = Math.max(0.08, heights[index]);
+
+        if (totalSurfaceMaterial > availableSurfaceMaterial) {
+          const scale = availableSurfaceMaterial / totalSurfaceMaterial;
+          cellSoilDepth *= scale;
+          cellCoarseDepth *= scale;
+        }
+
+        soilDepth[index] = clamp(
+          cellSoilDepth,
+          TERRAIN_MATERIAL_SETTINGS.initialSoilDepthMin,
+          TERRAIN_MATERIAL_SETTINGS.initialSoilDepthMax,
+        );
+        coarseRock[index] = clamp(
+          cellCoarseDepth,
+          TERRAIN_MATERIAL_SETTINGS.initialCoarseDepthMin,
+          TERRAIN_MATERIAL_SETTINGS.initialCoarseDepthMax,
+        );
+        bedrockHeights[index] = Math.max(0, heights[index] - soilDepth[index] - coarseRock[index]);
+        heights[index] = bedrockHeights[index] + soilDepth[index] + coarseRock[index];
       }
     }
 
