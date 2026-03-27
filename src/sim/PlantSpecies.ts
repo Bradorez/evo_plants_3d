@@ -120,9 +120,18 @@ export interface PlantRenderParameters {
 interface SpeciesTemplate {
   label: string;
   ecologyProfile: number;
-  phenotype: PlantPhenotypeClass;
   ecology: PlantEcologyTraits;
   morphology: PlantMorphologyTraits;
+}
+
+export interface PlantMorphologyDebugSummary {
+  label: string;
+  woodiness: number;
+  stature: number;
+  canopySpread: number;
+  branchiness: number;
+  coverage: number;
+  leafExpression: string;
 }
 
 export const MORPHOLOGY_BOUNDS = {
@@ -393,6 +402,7 @@ export function derivePlantRenderParameters(
   species: PlantSpeciesDefinition,
 ): PlantRenderParameters {
   const morphology = species.morphology;
+  const descriptor = summarizeMorphology(species);
   const stemCopies = Math.max(
     1,
     Math.round(
@@ -510,7 +520,7 @@ export function derivePlantRenderParameters(
     ),
     flowerAmount: morphology.floweriness,
     groundPatchScale: clamp(morphology.groundCoverFactor * 1.1, 0.18, 1),
-    descriptiveLabel: phenotypeName(species.phenotype),
+    descriptiveLabel: descriptor.label,
   };
 }
 
@@ -519,10 +529,30 @@ export function getSpeciesDisplayColor(species: PlantSpeciesDefinition): {
   wood: [number, number, number];
   flower: [number, number, number];
 } {
-  const hue = ((species.hueSeed % 1000) / 1000) * 0.28;
-  const saturation = 0.42 + ((species.hueSeed >> 10) % 100) / 250;
-  const value = 0.34 + ((species.hueSeed >> 18) % 100) / 220;
-  const foliage = hsvToRgb(hue + phenotypeHueOffset(species.phenotype), saturation, value);
+  const hueSeed = ((species.hueSeed % 1000) / 1000) * 0.18;
+  const morphology = species.morphology;
+  const ecologicalMoistureBias =
+    species.ecology.moisturePreference * 0.06 + species.ecology.persistentWetnessPreference * 0.03;
+  const dryBias = (1 - species.ecology.moisturePreference) * 0.04;
+  const foliageHue =
+    0.19 +
+    hueSeed +
+    ecologicalMoistureBias -
+    dryBias +
+    morphology.woodiness * 0.015 +
+    morphology.leafSize * 0.012 -
+    morphology.leafAspectRatio * 0.004;
+  const saturation =
+    0.38 +
+    ((species.hueSeed >> 10) % 100) / 320 +
+    morphology.foliageDensity * 0.12 +
+    morphology.leafDensity * 0.08;
+  const value =
+    0.3 +
+    ((species.hueSeed >> 18) % 100) / 260 +
+    species.ecology.vigor * 0.12 +
+    species.ecology.moisturePreference * 0.06;
+  const foliage = hsvToRgb(foliageHue, clamp(saturation, 0.22, 0.86), clamp(value, 0.2, 0.92));
   const wood: [number, number, number] = [
     lerp(0.27, 0.44, species.morphology.woodiness * 0.65),
     lerp(0.18, 0.28, species.morphology.woodiness * 0.4),
@@ -532,6 +562,55 @@ export function getSpeciesDisplayColor(species: PlantSpeciesDefinition): {
   const flower = hsvToRgb(flowerHue % 1, 0.45, 0.92);
 
   return { foliage, wood, flower };
+}
+
+/**
+ * This helper exists to verify that descriptive plant names are assigned after
+ * morphology is generated. It reads only the continuous trait state and does
+ * not feed back into structure generation.
+ */
+export function summarizeMorphology(species: PlantSpeciesDefinition): PlantMorphologyDebugSummary {
+  const morphology = species.morphology;
+  const heightNorm = morphology.maxHeight / MORPHOLOGY_BOUNDS.maxHeight[1];
+  const spreadNorm = morphology.crownRadius / MORPHOLOGY_BOUNDS.crownRadius[1];
+  const branchiness = clamp(
+    morphology.branchingRate * 0.45 + morphology.branchDensity * 0.35 + morphology.crownDensity * 0.2,
+    0,
+    1,
+  );
+  const coverage = clamp(
+    morphology.groundCoverFactor * 0.45 + morphology.basalSpread * 0.3 + (1 - morphology.clumping) * 0.25,
+    0,
+    1,
+  );
+  const leafExpression = leafTypeName(morphology.leafType);
+
+  let label = "mixed growth form";
+  if (coverage > 0.62 && morphology.woodiness < 0.22 && heightNorm < 0.16) {
+    label = morphology.verticalBias > 0.72 ? "grass-like cover" : "low spreading cover";
+  } else if (morphology.woodiness < 0.24 && morphology.verticalBias > 0.74 && morphology.topFoliageBias > 0.62) {
+    label = "upright wetland form";
+  } else if (morphology.woodiness > 0.64 && heightNorm > 0.32 && branchiness < 0.42 && morphology.topFoliageBias > 0.76) {
+    label = "columnar canopy form";
+  } else if (morphology.woodiness > 0.62 && heightNorm > 0.28 && spreadNorm > 0.22) {
+    label = "canopy tree form";
+  } else if (morphology.woodiness > 0.38 && coverage > 0.28) {
+    label = "woody spreader";
+  } else if (heightNorm > 0.18 && morphology.woodiness < 0.36 && branchiness < 0.3) {
+    label = "sparse upright form";
+  } else if (branchiness > 0.5 && coverage > 0.24) {
+    label = "bushy intermediate form";
+  }
+
+  return {
+    label,
+    woodiness: morphology.woodiness,
+    stature: heightNorm,
+    canopySpread: spreadNorm,
+    branchiness,
+    coverage,
+    leafExpression,
+  };
 }
 
 export function phenotypeName(phenotype: PlantPhenotypeClass): string {
@@ -558,7 +637,6 @@ function createTemplates(): SpeciesTemplate[] {
     {
       label: "Grass",
       ecologyProfile: ECOLOGY_PROFILE_DRYLAND,
-      phenotype: PlantPhenotypeClass.Grass,
       ecology: {
         moisturePreference: 0.26,
         moistureTolerance: 0.34,
@@ -602,7 +680,6 @@ function createTemplates(): SpeciesTemplate[] {
     {
       label: "Herb",
       ecologyProfile: ECOLOGY_PROFILE_MESIC,
-      phenotype: PlantPhenotypeClass.FloweringHerb,
       ecology: {
         moisturePreference: 0.48,
         moistureTolerance: 0.28,
@@ -646,7 +723,6 @@ function createTemplates(): SpeciesTemplate[] {
     {
       label: "Shrub",
       ecologyProfile: ECOLOGY_PROFILE_MESIC,
-      phenotype: PlantPhenotypeClass.Shrub,
       ecology: {
         moisturePreference: 0.42,
         moistureTolerance: 0.24,
@@ -690,7 +766,6 @@ function createTemplates(): SpeciesTemplate[] {
     {
       label: "Broadleaf",
       ecologyProfile: ECOLOGY_PROFILE_MESIC,
-      phenotype: PlantPhenotypeClass.BroadleafTree,
       ecology: {
         moisturePreference: 0.46,
         moistureTolerance: 0.22,
@@ -734,7 +809,6 @@ function createTemplates(): SpeciesTemplate[] {
     {
       label: "Conifer",
       ecologyProfile: ECOLOGY_PROFILE_DRYLAND,
-      phenotype: PlantPhenotypeClass.Conifer,
       ecology: {
         moisturePreference: 0.34,
         moistureTolerance: 0.2,
@@ -778,7 +852,6 @@ function createTemplates(): SpeciesTemplate[] {
     {
       label: "Palm",
       ecologyProfile: ECOLOGY_PROFILE_MESIC,
-      phenotype: PlantPhenotypeClass.Palm,
       ecology: {
         moisturePreference: 0.58,
         moistureTolerance: 0.18,
@@ -822,7 +895,6 @@ function createTemplates(): SpeciesTemplate[] {
     {
       label: "Reed",
       ecologyProfile: ECOLOGY_PROFILE_WETLAND,
-      phenotype: PlantPhenotypeClass.Reed,
       ecology: {
         moisturePreference: 0.78,
         moistureTolerance: 0.28,
@@ -1165,25 +1237,6 @@ function classifyEcologyProfile(ecology: PlantEcologyTraits): number {
   return ECOLOGY_PROFILE_MESIC;
 }
 
-function phenotypeHueOffset(phenotype: PlantPhenotypeClass): number {
-  switch (phenotype) {
-    case PlantPhenotypeClass.Grass:
-      return 0.04;
-    case PlantPhenotypeClass.FloweringHerb:
-      return 0.09;
-    case PlantPhenotypeClass.Shrub:
-      return 0.07;
-    case PlantPhenotypeClass.BroadleafTree:
-      return 0.1;
-    case PlantPhenotypeClass.Conifer:
-      return 0.16;
-    case PlantPhenotypeClass.Palm:
-      return 0.12;
-    case PlantPhenotypeClass.Reed:
-      return 0.02;
-  }
-}
-
 function clampRange(value: number, range: readonly [number, number]): number {
   return clamp(value, range[0], range[1]);
 }
@@ -1213,5 +1266,20 @@ function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
       return [t, p, v];
     default:
       return [v, p, q];
+  }
+}
+
+function leafTypeName(leafType: PlantLeafType): string {
+  switch (leafType) {
+    case PlantLeafType.Blade:
+      return "blade";
+    case PlantLeafType.Broad:
+      return "broad";
+    case PlantLeafType.Needle:
+      return "needle";
+    case PlantLeafType.Frond:
+      return "frond";
+    case PlantLeafType.Reed:
+      return "reed";
   }
 }
