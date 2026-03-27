@@ -70,6 +70,7 @@ class TerrainHydrologyApp {
 
   private rebuildTerrainVisuals(): void {
     this.terrainMeshRenderer.rebuild(this.simulation.terrain);
+    this.terrainMeshRenderer.resetHydrologyResponse();
     this.waterOverlayRenderer.rebuild(this.simulation.terrain);
     frameCameraOnTerrain(this.sceneBundle.camera, this.simulation.terrain);
   }
@@ -77,6 +78,7 @@ class TerrainHydrologyApp {
   private resetSimulation(): void {
     this.simulation.reset();
     this.simulationAccumulator = 0;
+    this.terrainMeshRenderer.resetHydrologyResponse();
     this.controls.setStats(this.simulation.getStats());
   }
 
@@ -104,6 +106,13 @@ class TerrainHydrologyApp {
         this.simulationAccumulator = 0;
       }
     }
+
+    this.terrainMeshRenderer.updateHydrologyResponse(
+      this.simulation.terrain,
+      this.simulation.waterDepth,
+      this.simulation.flowAccumulation,
+      realDeltaSeconds,
+    );
 
     this.waterOverlayRenderer.update(
       this.simulation.terrain,
