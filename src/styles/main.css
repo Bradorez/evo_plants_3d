@@ -40,8 +40,8 @@ output {
   display: block;
   outline: none;
   background:
-    radial-gradient(circle at 30% 20%, rgba(96, 142, 165, 0.18), transparent 30%),
-    linear-gradient(180deg, #0a1319 0%, #13212c 100%);
+    radial-gradient(circle at 30% 20%, rgba(96, 118, 136, 0.18), transparent 32%),
+    linear-gradient(180deg, #4a5866 0%, #687887 100%);
 }
 
 .control-panel {

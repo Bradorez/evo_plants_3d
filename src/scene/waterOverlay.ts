@@ -31,7 +31,7 @@ export class WaterOverlayRenderer {
     this.material = new StandardMaterial("water-overlay-material", scene);
     this.material.specularColor = Color3.Black();
     this.material.diffuseColor = Color3.White();
-    this.material.emissiveColor = new Color3(0.08, 0.2, 0.32);
+    this.material.emissiveColor = new Color3(0.018, 0.08, 0.16);
     this.material.alpha = 1;
     this.material.backFaceCulling = false;
     this.material.disableLighting = true;
@@ -124,14 +124,19 @@ export class WaterOverlayRenderer {
       const colorOffset = index * 4;
       const depth = waterDepth[index];
       const accumulation = flowAccumulation[index];
-      const depthStrength = options.showWaterDepth ? 1 - Math.exp(-depth * 9) : 0;
-      const riverStrength = options.showRivers ? 1 - Math.exp(-accumulation * 0.14) : 0;
-      const visibleStrength = Math.max(depthStrength, riverStrength * 0.95);
-      const waterSurfaceLift = Math.max(depth, riverStrength * 0.08);
+      const depthStrength = options.showWaterDepth
+        ? clamp((depth - 0.035) / 0.22, 0, 1)
+        : 0;
+      const riverStrength = options.showRivers
+        ? clamp((Math.log1p(accumulation) - 5.1) / 2.2, 0, 1)
+        : 0;
+      const wetChannelStrength = riverStrength * clamp((depth - 0.012) / 0.08, 0, 1);
+      const visibleStrength = Math.max(depthStrength, wetChannelStrength);
+      const waterSurfaceLift = Math.max(depth, wetChannelStrength * 0.008);
 
       this.positions[vertexOffset + 1] = terrain.heights[index] + waterSurfaceLift + 0.03;
 
-      if (visibleStrength < 0.015) {
+      if (visibleStrength < 0.18) {
         this.colors[colorOffset] = 0;
         this.colors[colorOffset + 1] = 0;
         this.colors[colorOffset + 2] = 0;
@@ -139,10 +144,11 @@ export class WaterOverlayRenderer {
         continue;
       }
 
-      const r = lerp(0.02, 0.12, riverStrength);
-      const g = lerp(0.24, 0.86, clamp(riverStrength * 0.85 + depthStrength * 0.35, 0, 1));
-      const b = lerp(0.48, 1, clamp(depthStrength * 0.8 + riverStrength * 0.55, 0, 1));
-      const alpha = clamp(depthStrength * 0.82 + riverStrength * 0.58, 0.05, 0.88);
+      const pooledWaterStrength = Math.max(depthStrength, wetChannelStrength);
+      const r = lerp(0.01, 0.035, wetChannelStrength);
+      const g = lerp(0.08, 0.24, clamp(wetChannelStrength * 0.9 + depthStrength * 0.16, 0, 1));
+      const b = lerp(0.24, 0.62, clamp(pooledWaterStrength * 0.92, 0, 1));
+      const alpha = clamp(depthStrength * 0.34 + wetChannelStrength * 0.2, 0.06, 0.36);
 
       this.colors[colorOffset] = r;
       this.colors[colorOffset + 1] = g;

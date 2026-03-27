@@ -25,8 +25,8 @@ export interface SceneBundle {
 export function createScene(canvas: HTMLCanvasElement): SceneBundle {
   const engine = new Engine(canvas, true);
   const scene = new Scene(engine);
-  scene.clearColor = new Color4(0.035, 0.07, 0.09, 1);
-  scene.ambientColor = new Color3(0.24, 0.27, 0.29);
+  scene.clearColor = new Color4(0.45, 0.53, 0.61, 1);
+  scene.ambientColor = new Color3(0.14, 0.12, 0.1);
 
   const camera = new ArcRotateCamera(
     "terrain-camera",
@@ -49,8 +49,9 @@ export function createScene(canvas: HTMLCanvasElement): SceneBundle {
     new Vector3(0.2, 1, -0.3),
     scene,
   );
-  hemisphericLight.intensity = 0.92;
-  hemisphericLight.groundColor = new Color3(0.08, 0.1, 0.12);
+  hemisphericLight.intensity = 0.8;
+  hemisphericLight.diffuse = new Color3(0.96, 0.9, 0.82);
+  hemisphericLight.groundColor = new Color3(0.13, 0.11, 0.09);
 
   const directionalLight = new DirectionalLight(
     "sun-light",
@@ -58,7 +59,8 @@ export function createScene(canvas: HTMLCanvasElement): SceneBundle {
     scene,
   );
   directionalLight.position = new Vector3(40, 90, -25);
-  directionalLight.intensity = 0.88;
+  directionalLight.intensity = 1.28;
+  directionalLight.diffuse = new Color3(1, 0.92, 0.8);
 
   const handleResize = (): void => {
     engine.resize();

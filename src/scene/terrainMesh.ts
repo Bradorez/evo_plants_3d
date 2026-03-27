@@ -21,8 +21,13 @@ export class TerrainMeshRenderer {
   public constructor(scene: Scene) {
     this.scene = scene;
     this.material = new StandardMaterial("terrain-material", scene);
+    // Keep the terrain visible even if future mesh edits accidentally disturb
+    // winding order again. The primary fix is the corrected index winding
+    // below, but disabling back-face culling makes the terrain more robust.
+    this.material.backFaceCulling = false;
     this.material.specularColor = Color3.Black();
-    this.material.diffuseColor = Color3.White();
+    this.material.diffuseColor = new Color3(0.98, 0.89, 0.76);
+    this.material.emissiveColor = new Color3(0.018, 0.012, 0.008);
   }
 
   public rebuild(terrain: TerrainData): Mesh {
@@ -70,12 +75,16 @@ export class TerrainMeshRenderer {
         const bottomLeft = terrain.grid.index(x, y + 1);
         const bottomRight = terrain.grid.index(x + 1, y + 1);
 
+        // Wind triangles so the terrain top surface faces the camera when
+        // viewed from above. The previous winding produced backfaces on the
+        // playable side of the terrain, which made the ground appear
+        // transparent from the normal orbit angle.
         indices[indexCursor] = topLeft;
-        indices[indexCursor + 1] = bottomLeft;
-        indices[indexCursor + 2] = topRight;
+        indices[indexCursor + 1] = topRight;
+        indices[indexCursor + 2] = bottomLeft;
         indices[indexCursor + 3] = topRight;
-        indices[indexCursor + 4] = bottomLeft;
-        indices[indexCursor + 5] = bottomRight;
+        indices[indexCursor + 4] = bottomRight;
+        indices[indexCursor + 5] = bottomLeft;
         indexCursor += 6;
       }
     }
@@ -111,10 +120,11 @@ export class TerrainMeshRenderer {
   }
 
   private getTerrainColor(elevation: number, slope: number): [number, number, number] {
-    const low = [0.19, 0.34, 0.2] as const;
-    const mids = [0.43, 0.56, 0.31] as const;
-    const high = [0.53, 0.47, 0.38] as const;
-    const peak = [0.78, 0.76, 0.7] as const;
+    const low = [0.34, 0.23, 0.15] as const;
+    const mids = [0.5, 0.35, 0.23] as const;
+    const high = [0.64, 0.48, 0.33] as const;
+    const peak = [0.78, 0.63, 0.47] as const;
+    const rock = [0.3, 0.215, 0.15] as const;
 
     let r = 0;
     let g = 0;
@@ -137,7 +147,13 @@ export class TerrainMeshRenderer {
       b = lerp(high[2], peak[2], t);
     }
 
-    const shade = 1 - slope * 0.22;
+    // Steeper faces read as darker rock, while flatter areas keep warmer dustier tones.
+    const rockBlend = Math.min(1, slope * 1.35);
+    r = lerp(r, rock[0], rockBlend);
+    g = lerp(g, rock[1], rockBlend);
+    b = lerp(b, rock[2], rockBlend);
+
+    const shade = 1 - slope * 0.14;
     return [r * shade, g * shade, b * shade];
   }
 }
