@@ -42,16 +42,28 @@ export interface PlantMorphologyTraits {
   woodiness: number;
   stemCount: number;
   trunkThickness: number;
+  apicalDominance: number;
   branchDensity: number;
+  branchingRate: number;
+  branchAngle: number;
   crownWidth: number;
   crownHeight: number;
+  verticalBias: number;
+  lateralSpread: number;
+  crownDensity: number;
+  crownRadius: number;
+  topFoliageBias: number;
+  basalSpread: number;
+  foliageDensity: number;
   leafSize: number;
+  leafAspectRatio: number;
   leafDensity: number;
   leafType: PlantLeafType;
   floweriness: number;
   topCanopyBias: number;
   groundCoverFactor: number;
   uprightness: number;
+  clumping: number;
 }
 
 export interface PlantSpeciesDefinition {
@@ -81,13 +93,28 @@ export interface HabitatPressureProfile {
 
 export interface PlantRenderParameters {
   heightScale: number;
-  trunkHeightFraction: number;
-  crownWidthScale: number;
-  crownHeightScale: number;
-  foliageAmount: number;
   stemCopies: number;
+  stemBaseRadius: number;
+  stemClusterRadius: number;
+  primaryStemHeightFraction: number;
+  branchCopies: number;
+  branchAngle: number;
+  branchReach: number;
+  branchElevationBias: number;
+  crownRadius: number;
+  crownHeight: number;
+  crownDensity: number;
+  foliageAmount: number;
+  foliageTopBias: number;
+  foliageVerticalSpan: number;
+  foliageClusterCopies: number;
+  foliageLateralSpread: number;
+  leafLength: number;
+  leafWidth: number;
+  leafTilt: number;
   flowerAmount: number;
   groundPatchScale: number;
+  descriptiveLabel: string;
 }
 
 interface SpeciesTemplate {
@@ -103,15 +130,27 @@ export const MORPHOLOGY_BOUNDS = {
   woodiness: [0, 1] as const,
   stemCount: [1, 8] as const,
   trunkThickness: [0.02, 1] as const,
+  apicalDominance: [0, 1] as const,
   branchDensity: [0, 1] as const,
+  branchingRate: [0, 1] as const,
+  branchAngle: [0.08, 1.2] as const,
   crownWidth: [0.1, 6] as const,
   crownHeight: [0.08, 6] as const,
+  verticalBias: [0, 1] as const,
+  lateralSpread: [0, 1] as const,
+  crownDensity: [0, 1] as const,
+  crownRadius: [0.08, 6] as const,
+  topFoliageBias: [0, 1] as const,
+  basalSpread: [0, 1] as const,
+  foliageDensity: [0, 1] as const,
   leafSize: [0.03, 1.4] as const,
+  leafAspectRatio: [0.2, 5] as const,
   leafDensity: [0, 1] as const,
   floweriness: [0, 1] as const,
   topCanopyBias: [0, 1] as const,
   groundCoverFactor: [0, 1] as const,
   uprightness: [0, 1] as const,
+  clumping: [0, 1] as const,
 };
 
 /**
@@ -209,15 +248,19 @@ export function evaluateMorphologyHabitatFit(
   habitat: HabitatPressureProfile,
 ): number {
   const morphology = species.morphology;
-  const phenotype = species.phenotype;
+  const heightNorm = morphology.maxHeight / MORPHOLOGY_BOUNDS.maxHeight[1];
+  const crownNorm = morphology.crownWidth / MORPHOLOGY_BOUNDS.crownWidth[1];
+  const needleBias = morphology.leafType === PlantLeafType.Needle ? 1 : 0;
+  const reedBias = morphology.leafType === PlantLeafType.Reed ? 1 : 0;
 
   const dryLowFormFit =
     habitat.dryness *
     clamp(
       morphology.groundCoverFactor * 0.42 +
-        (1 - morphology.maxHeight / MORPHOLOGY_BOUNDS.maxHeight[1]) * 0.28 +
-        (1 - morphology.crownWidth / MORPHOLOGY_BOUNDS.crownWidth[1]) * 0.14 +
-        (1 - morphology.woodiness) * 0.16,
+        (1 - heightNorm) * 0.22 +
+        (1 - crownNorm) * 0.12 +
+        (1 - morphology.woodiness) * 0.12 +
+        morphology.basalSpread * 0.12,
       0,
       1,
     );
@@ -226,9 +269,10 @@ export function evaluateMorphologyHabitatFit(
     clamp(
       species.ecology.floodTolerance * 0.28 +
         morphology.uprightness * 0.18 +
-        morphology.topCanopyBias * 0.12 +
-        morphology.leafDensity * 0.12 +
-        (phenotype === PlantPhenotypeClass.Reed ? 0.3 : 0),
+        morphology.topCanopyBias * 0.1 +
+        morphology.leafDensity * 0.1 +
+        morphology.verticalBias * 0.08 +
+        reedBias * 0.26,
       0,
       1,
     );
@@ -236,23 +280,24 @@ export function evaluateMorphologyHabitatFit(
     habitat.fertileMoisture *
     habitat.stability *
     clamp(
-      (morphology.maxHeight / MORPHOLOGY_BOUNDS.maxHeight[1]) * 0.34 +
+      heightNorm * 0.3 +
         morphology.woodiness * 0.24 +
-        morphology.branchDensity * 0.14 +
-        morphology.crownWidth / MORPHOLOGY_BOUNDS.crownWidth[1] * 0.14 +
-        (phenotype === PlantPhenotypeClass.BroadleafTree ? 0.14 : 0),
+        morphology.branchDensity * 0.12 +
+        crownNorm * 0.12 +
+        morphology.crownDensity * 0.12 +
+        morphology.foliageDensity * 0.1,
       0,
       1,
     );
   const slopeFit =
     habitat.slope *
     clamp(
-      (phenotype === PlantPhenotypeClass.Conifer ? 0.24 : 0) +
-        (phenotype === PlantPhenotypeClass.Shrub ? 0.14 : 0) +
         morphology.uprightness * 0.16 +
-        (1 - morphology.crownWidth / MORPHOLOGY_BOUNDS.crownWidth[1]) * 0.2 +
-        (1 - morphology.groundCoverFactor) * 0.1 +
-        species.ecology.slopeTolerance * 0.16,
+        (1 - crownNorm) * 0.16 +
+        (1 - morphology.groundCoverFactor) * 0.08 +
+        species.ecology.slopeTolerance * 0.16 +
+        needleBias * 0.18 +
+        morphology.apicalDominance * 0.1,
       0,
       1,
     );
@@ -260,9 +305,10 @@ export function evaluateMorphologyHabitatFit(
   const droughtCost =
     habitat.dryness *
     clamp(
-      morphology.maxHeight / MORPHOLOGY_BOUNDS.maxHeight[1] * 0.26 +
-        morphology.crownWidth / MORPHOLOGY_BOUNDS.crownWidth[1] * 0.18 +
-        morphology.leafSize / MORPHOLOGY_BOUNDS.leafSize[1] * 0.12,
+      heightNorm * 0.24 +
+        crownNorm * 0.16 +
+        morphology.leafSize / MORPHOLOGY_BOUNDS.leafSize[1] * 0.12 +
+        morphology.crownDensity * 0.08,
       0,
       0.4,
     );
@@ -270,8 +316,8 @@ export function evaluateMorphologyHabitatFit(
     habitat.channelInfluence *
     clamp(
       morphology.woodiness * 0.08 +
-        (phenotype === PlantPhenotypeClass.BroadleafTree ? 0.1 : 0) +
-        (phenotype === PlantPhenotypeClass.Conifer ? 0.12 : 0),
+        heightNorm * 0.08 +
+        needleBias * 0.1,
       0,
       0.28,
     );
@@ -291,9 +337,9 @@ export function dominantHabitatPressure(habitat: HabitatPressureProfile): string
 }
 
 /**
- * The phenotype classifier is intentionally deterministic and coarse. Similar
- * morphology combinations map to the same visible growth form so species stay
- * visually understandable rather than collapsing into noisy one-off meshes.
+ * The phenotype classifier is now only a descriptive summary. Rendering is
+ * driven by continuous morphology traits; this label remains for debugging and
+ * high-level inspection.
  */
 export function classifyPhenotype(morphology: PlantMorphologyTraits): PlantPhenotypeClass {
   if (
@@ -347,21 +393,124 @@ export function derivePlantRenderParameters(
   species: PlantSpeciesDefinition,
 ): PlantRenderParameters {
   const morphology = species.morphology;
-  const trunkHeightFraction = clamp(
-    0.18 + morphology.woodiness * 0.42 + morphology.topCanopyBias * 0.18,
-    0.05,
-    0.86,
+  const stemCopies = Math.max(
+    1,
+    Math.round(
+      morphology.stemCount * (0.45 + morphology.groundCoverFactor * 0.18 + (1 - morphology.clumping) * 0.12),
+    ),
+  );
+  const primaryStemHeightFraction = clamp(
+    0.18 +
+      morphology.apicalDominance * 0.34 +
+      morphology.verticalBias * 0.18 +
+      morphology.woodiness * 0.14,
+    0.08,
+    0.94,
+  );
+  const branchCopies = Math.round(
+    clamp(
+      morphology.branchingRate * 5 +
+        morphology.branchDensity * 3 +
+        morphology.crownDensity * 2 -
+        morphology.groundCoverFactor * 2,
+      0,
+      12,
+    ),
+  );
+  const crownRadius = clamp(
+    morphology.crownRadius * (0.65 + morphology.lateralSpread * 0.35),
+    0.08,
+    6,
+  );
+  const crownHeight = clamp(
+    morphology.crownHeight * (0.6 + morphology.verticalBias * 0.4),
+    0.08,
+    6,
+  );
+  const leafLength = clamp(
+    morphology.leafSize * (0.85 + morphology.leafAspectRatio * 0.22),
+    0.03,
+    1.9,
+  );
+  const leafWidth = clamp(
+    morphology.leafSize / Math.max(morphology.leafAspectRatio, 0.2) * 0.95,
+    0.015,
+    0.9,
   );
 
   return {
     heightScale: morphology.maxHeight,
-    trunkHeightFraction,
-    crownWidthScale: morphology.crownWidth,
-    crownHeightScale: morphology.crownHeight,
-    foliageAmount: clamp(morphology.leafDensity * 0.7 + morphology.branchDensity * 0.3, 0.08, 1),
-    stemCopies: Math.max(1, Math.round(morphology.stemCount)),
+    stemCopies,
+    stemBaseRadius: clamp(
+      morphology.trunkThickness * (0.55 + morphology.woodiness * 0.45),
+      0.02,
+      1,
+    ),
+    stemClusterRadius: clamp(
+      morphology.basalSpread * (0.18 + morphology.maxHeight * 0.03) * (1 - morphology.clumping * 0.35),
+      0.02,
+      2.4,
+    ),
+    primaryStemHeightFraction,
+    branchCopies,
+    branchAngle: morphology.branchAngle,
+    branchReach: clamp(
+      morphology.lateralSpread * 0.4 + crownRadius * 0.24 + (1 - morphology.verticalBias) * 0.12,
+      0.04,
+      2.8,
+    ),
+    branchElevationBias: clamp(
+      morphology.apicalDominance * 0.45 + morphology.topFoliageBias * 0.35 + morphology.verticalBias * 0.2,
+      0,
+      1,
+    ),
+    crownRadius,
+    crownHeight,
+    crownDensity: clamp(
+      morphology.crownDensity * 0.65 + morphology.branchDensity * 0.2 + morphology.foliageDensity * 0.15,
+      0,
+      1,
+    ),
+    foliageAmount: clamp(
+      morphology.foliageDensity * 0.46 + morphology.leafDensity * 0.34 + morphology.crownDensity * 0.2,
+      0.04,
+      1,
+    ),
+    foliageTopBias: clamp(
+      morphology.topFoliageBias * 0.7 + morphology.topCanopyBias * 0.2 + morphology.apicalDominance * 0.1,
+      0,
+      1,
+    ),
+    foliageVerticalSpan: clamp(
+      morphology.crownHeight * (0.42 + morphology.crownDensity * 0.22 + (1 - morphology.topFoliageBias) * 0.2),
+      0.12,
+      4.5,
+    ),
+    foliageClusterCopies: Math.round(
+      clamp(
+        morphology.foliageDensity * 5 +
+          morphology.crownDensity * 3 +
+          morphology.branchingRate * 2 +
+          morphology.groundCoverFactor * 2,
+        1,
+        14,
+      ),
+    ),
+    foliageLateralSpread: clamp(
+      morphology.lateralSpread * 0.42 + morphology.crownRadius * 0.18 + morphology.groundCoverFactor * 0.12,
+      0.03,
+      2.5,
+    ),
+    leafLength,
+    leafWidth,
+    leafTilt: clamp(
+      (1 - morphology.verticalBias) * 0.5 + morphology.branchAngle * 0.22 + morphology.leafAspectRatio * 0.04,
+      0.05,
+      1.2,
+    ),
     flowerAmount: morphology.floweriness,
     groundPatchScale: clamp(morphology.groundCoverFactor * 1.1, 0.18, 1),
+    descriptiveLabel: phenotypeName(species.phenotype),
   };
 }
 
@@ -426,16 +575,28 @@ function createTemplates(): SpeciesTemplate[] {
         woodiness: 0.06,
         stemCount: 5,
         trunkThickness: 0.03,
+        apicalDominance: 0.18,
         branchDensity: 0.12,
+        branchingRate: 0.08,
+        branchAngle: 0.62,
         crownWidth: 0.48,
         crownHeight: 0.32,
+        verticalBias: 0.78,
+        lateralSpread: 0.48,
+        crownDensity: 0.18,
+        crownRadius: 0.42,
+        topFoliageBias: 0.24,
+        basalSpread: 0.74,
+        foliageDensity: 0.72,
         leafSize: 0.12,
+        leafAspectRatio: 3.8,
         leafDensity: 0.72,
         leafType: PlantLeafType.Blade,
         floweriness: 0.08,
         topCanopyBias: 0.18,
         groundCoverFactor: 0.84,
         uprightness: 0.74,
+        clumping: 0.58,
       },
     },
     {
@@ -458,16 +619,28 @@ function createTemplates(): SpeciesTemplate[] {
         woodiness: 0.12,
         stemCount: 3,
         trunkThickness: 0.04,
+        apicalDominance: 0.32,
         branchDensity: 0.24,
+        branchingRate: 0.22,
+        branchAngle: 0.78,
         crownWidth: 0.42,
         crownHeight: 0.5,
+        verticalBias: 0.62,
+        lateralSpread: 0.38,
+        crownDensity: 0.32,
+        crownRadius: 0.44,
+        topFoliageBias: 0.42,
+        basalSpread: 0.42,
+        foliageDensity: 0.56,
         leafSize: 0.22,
+        leafAspectRatio: 1.6,
         leafDensity: 0.5,
         leafType: PlantLeafType.Broad,
         floweriness: 0.7,
         topCanopyBias: 0.42,
         groundCoverFactor: 0.44,
         uprightness: 0.62,
+        clumping: 0.44,
       },
     },
     {
@@ -490,16 +663,28 @@ function createTemplates(): SpeciesTemplate[] {
         woodiness: 0.58,
         stemCount: 4,
         trunkThickness: 0.08,
+        apicalDominance: 0.34,
         branchDensity: 0.58,
+        branchingRate: 0.52,
+        branchAngle: 0.82,
         crownWidth: 1.2,
         crownHeight: 0.92,
+        verticalBias: 0.46,
+        lateralSpread: 0.72,
+        crownDensity: 0.58,
+        crownRadius: 1.04,
+        topFoliageBias: 0.38,
+        basalSpread: 0.64,
+        foliageDensity: 0.68,
         leafSize: 0.2,
+        leafAspectRatio: 1.3,
         leafDensity: 0.72,
         leafType: PlantLeafType.Broad,
         floweriness: 0.14,
         topCanopyBias: 0.46,
         groundCoverFactor: 0.34,
         uprightness: 0.52,
+        clumping: 0.62,
       },
     },
     {
@@ -522,16 +707,28 @@ function createTemplates(): SpeciesTemplate[] {
         woodiness: 0.86,
         stemCount: 1,
         trunkThickness: 0.22,
+        apicalDominance: 0.72,
         branchDensity: 0.7,
+        branchingRate: 0.64,
+        branchAngle: 0.68,
         crownWidth: 2.7,
         crownHeight: 2.3,
+        verticalBias: 0.74,
+        lateralSpread: 0.68,
+        crownDensity: 0.74,
+        crownRadius: 2.5,
+        topFoliageBias: 0.62,
+        basalSpread: 0.18,
+        foliageDensity: 0.82,
         leafSize: 0.3,
+        leafAspectRatio: 1.1,
         leafDensity: 0.82,
         leafType: PlantLeafType.Broad,
         floweriness: 0.06,
         topCanopyBias: 0.56,
         groundCoverFactor: 0.12,
         uprightness: 0.82,
+        clumping: 0.24,
       },
     },
     {
@@ -554,16 +751,28 @@ function createTemplates(): SpeciesTemplate[] {
         woodiness: 0.9,
         stemCount: 1,
         trunkThickness: 0.18,
+        apicalDominance: 0.84,
         branchDensity: 0.52,
+        branchingRate: 0.44,
+        branchAngle: 0.38,
         crownWidth: 1.8,
         crownHeight: 3.4,
+        verticalBias: 0.88,
+        lateralSpread: 0.3,
+        crownDensity: 0.68,
+        crownRadius: 1.6,
+        topFoliageBias: 0.82,
+        basalSpread: 0.12,
+        foliageDensity: 0.84,
         leafSize: 0.1,
+        leafAspectRatio: 4.2,
         leafDensity: 0.86,
         leafType: PlantLeafType.Needle,
         floweriness: 0.02,
         topCanopyBias: 0.74,
         groundCoverFactor: 0.08,
         uprightness: 0.88,
+        clumping: 0.18,
       },
     },
     {
@@ -586,16 +795,28 @@ function createTemplates(): SpeciesTemplate[] {
         woodiness: 0.74,
         stemCount: 1,
         trunkThickness: 0.16,
+        apicalDominance: 0.92,
         branchDensity: 0.18,
+        branchingRate: 0.1,
+        branchAngle: 1.02,
         crownWidth: 2.2,
         crownHeight: 1.1,
+        verticalBias: 0.96,
+        lateralSpread: 0.78,
+        crownDensity: 0.34,
+        crownRadius: 2.1,
+        topFoliageBias: 0.94,
+        basalSpread: 0.1,
+        foliageDensity: 0.56,
         leafSize: 0.8,
+        leafAspectRatio: 4.6,
         leafDensity: 0.56,
         leafType: PlantLeafType.Frond,
         floweriness: 0.08,
         topCanopyBias: 0.92,
         groundCoverFactor: 0.08,
         uprightness: 0.92,
+        clumping: 0.16,
       },
     },
     {
@@ -618,16 +839,28 @@ function createTemplates(): SpeciesTemplate[] {
         woodiness: 0.1,
         stemCount: 6,
         trunkThickness: 0.03,
+        apicalDominance: 0.64,
         branchDensity: 0.1,
+        branchingRate: 0.06,
+        branchAngle: 0.3,
         crownWidth: 0.38,
         crownHeight: 0.8,
+        verticalBias: 0.94,
+        lateralSpread: 0.22,
+        crownDensity: 0.18,
+        crownRadius: 0.32,
+        topFoliageBias: 0.86,
+        basalSpread: 0.48,
+        foliageDensity: 0.62,
         leafSize: 0.18,
+        leafAspectRatio: 4.1,
         leafDensity: 0.62,
         leafType: PlantLeafType.Reed,
         floweriness: 0.02,
         topCanopyBias: 0.82,
         groundCoverFactor: 0.66,
         uprightness: 0.92,
+        clumping: 0.52,
       },
     },
   ];
@@ -688,7 +921,13 @@ function mutateMorphology(
       source.trunkThickness * (1 + signedJitter(random, strength)),
       MORPHOLOGY_BOUNDS.trunkThickness,
     ),
+    apicalDominance: clamp(source.apicalDominance + signedJitter(random, strength), 0, 1),
     branchDensity: clamp(source.branchDensity + signedJitter(random, strength), 0, 1),
+    branchingRate: clamp(source.branchingRate + signedJitter(random, strength), 0, 1),
+    branchAngle: clampRange(
+      source.branchAngle * (1 + signedJitter(random, strength * 0.8)),
+      MORPHOLOGY_BOUNDS.branchAngle,
+    ),
     crownWidth: clampRange(
       source.crownWidth * (1 + signedJitter(random, strength)),
       MORPHOLOGY_BOUNDS.crownWidth,
@@ -697,9 +936,23 @@ function mutateMorphology(
       source.crownHeight * (1 + signedJitter(random, strength)),
       MORPHOLOGY_BOUNDS.crownHeight,
     ),
+    verticalBias: clamp(source.verticalBias + signedJitter(random, strength), 0, 1),
+    lateralSpread: clamp(source.lateralSpread + signedJitter(random, strength), 0, 1),
+    crownDensity: clamp(source.crownDensity + signedJitter(random, strength), 0, 1),
+    crownRadius: clampRange(
+      source.crownRadius * (1 + signedJitter(random, strength)),
+      MORPHOLOGY_BOUNDS.crownRadius,
+    ),
+    topFoliageBias: clamp(source.topFoliageBias + signedJitter(random, strength), 0, 1),
+    basalSpread: clamp(source.basalSpread + signedJitter(random, strength), 0, 1),
+    foliageDensity: clamp(source.foliageDensity + signedJitter(random, strength), 0, 1),
     leafSize: clampRange(
       source.leafSize * (1 + signedJitter(random, strength)),
       MORPHOLOGY_BOUNDS.leafSize,
+    ),
+    leafAspectRatio: clampRange(
+      source.leafAspectRatio * (1 + signedJitter(random, strength * 0.75)),
+      MORPHOLOGY_BOUNDS.leafAspectRatio,
     ),
     leafDensity: clamp(source.leafDensity + signedJitter(random, strength), 0, 1),
     leafType: mutateLeafType(source.leafType, random, strength),
@@ -707,6 +960,7 @@ function mutateMorphology(
     topCanopyBias: clamp(source.topCanopyBias + signedJitter(random, strength), 0, 1),
     groundCoverFactor: clamp(source.groundCoverFactor + signedJitter(random, strength), 0, 1),
     uprightness: clamp(source.uprightness + signedJitter(random, strength), 0, 1),
+    clumping: clamp(source.clumping + signedJitter(random, strength), 0, 1),
   };
 
   if (!habitat) {
@@ -773,31 +1027,110 @@ function mutateMorphology(
     0.04 + stableFertilePressure * 0.34 + slopePressure * 0.08,
     0.12,
   );
+  morphology.apicalDominance = lerp(
+    morphology.apicalDominance,
+    stableFertilePressure * 0.46 + slopePressure * 0.24 + wetPressure * 0.16,
+    0.12,
+  );
+  morphology.branchingRate = lerp(
+    morphology.branchingRate,
+    stableFertilePressure * 0.42 + wetPressure * 0.16 + (1 - dryPressure) * 0.18,
+    0.12,
+  );
+  morphology.branchAngle = lerp(
+    morphology.branchAngle,
+    0.24 + morphology.lateralSpread * 0.5 + wetPressure * 0.18 + (1 - slopePressure) * 0.12,
+    0.12,
+  );
+  morphology.verticalBias = lerp(
+    morphology.verticalBias,
+    wetPressure * 0.28 + slopePressure * 0.26 + stableFertilePressure * 0.16 + 0.22,
+    0.12,
+  );
+  morphology.lateralSpread = lerp(
+    morphology.lateralSpread,
+    stableFertilePressure * 0.34 + dryPressure * 0.26 + wetPressure * 0.14,
+    0.12,
+  );
+  morphology.crownDensity = lerp(
+    morphology.crownDensity,
+    stableFertilePressure * 0.5 + wetPressure * 0.18 + (1 - dryPressure) * 0.12,
+    0.12,
+  );
+  morphology.crownRadius = lerp(
+    morphology.crownRadius,
+    0.24 + stableFertilePressure * 2.8 + dryPressure * 0.6 - slopePressure * 0.7,
+    0.12,
+  );
+  morphology.topFoliageBias = lerp(
+    morphology.topFoliageBias,
+    stableFertilePressure * 0.34 + wetPressure * 0.32 + morphology.apicalDominance * 0.14,
+    0.12,
+  );
+  morphology.basalSpread = lerp(
+    morphology.basalSpread,
+    dryPressure * 0.42 + wetPressure * 0.22 + (1 - morphology.apicalDominance) * 0.16,
+    0.12,
+  );
+  morphology.foliageDensity = lerp(
+    morphology.foliageDensity,
+    stableFertilePressure * 0.46 + wetPressure * 0.18 + (1 - dryPressure) * 0.14,
+    0.12,
+  );
+  morphology.leafAspectRatio = lerp(
+    morphology.leafAspectRatio,
+    1.1 + slopePressure * 1.2 + wetPressure * 1.3 + dryPressure * 0.8,
+    0.12,
+  );
+  morphology.clumping = lerp(
+    morphology.clumping,
+    wetPressure * 0.34 + stableFertilePressure * 0.18 + (1 - dryPressure) * 0.12,
+    0.12,
+  );
 
   if (wetPressure > 0.62 && (ecology?.floodTolerance ?? 0) > 0.56) {
     morphology.leafType = PlantLeafType.Reed;
     morphology.woodiness = lerp(morphology.woodiness, 0.16, 0.28);
     morphology.groundCoverFactor = lerp(morphology.groundCoverFactor, 0.72, 0.24);
+    morphology.verticalBias = lerp(morphology.verticalBias, 0.86, 0.2);
+    morphology.lateralSpread = lerp(morphology.lateralSpread, 0.28, 0.2);
   } else if (dryPressure > 0.64 && (ecology?.droughtTolerance ?? 0) > 0.54) {
     morphology.leafType = dryPressure > 0.78 ? PlantLeafType.Blade : PlantLeafType.Needle;
+    morphology.groundCoverFactor = lerp(morphology.groundCoverFactor, 0.62, 0.14);
+    morphology.maxHeight = lerp(morphology.maxHeight, 0.8 + stableFertilePressure * 3.2, 0.1);
   } else if (stableFertilePressure > 0.58 && (ecology?.floodTolerance ?? 0) < 0.42) {
     morphology.leafType = PlantLeafType.Broad;
+    morphology.crownDensity = lerp(morphology.crownDensity, 0.72, 0.16);
   } else if (slopePressure > 0.58 && morphology.woodiness > 0.52) {
     morphology.leafType = PlantLeafType.Needle;
+    morphology.verticalBias = lerp(morphology.verticalBias, 0.82, 0.18);
+    morphology.crownRadius = lerp(morphology.crownRadius, 1.2, 0.14);
   }
 
   morphology.maxHeight = clampRange(morphology.maxHeight, MORPHOLOGY_BOUNDS.maxHeight);
   morphology.woodiness = clamp(morphology.woodiness, 0, 1);
   morphology.stemCount = clampRange(morphology.stemCount, MORPHOLOGY_BOUNDS.stemCount);
   morphology.trunkThickness = clampRange(morphology.trunkThickness, MORPHOLOGY_BOUNDS.trunkThickness);
+  morphology.apicalDominance = clamp(morphology.apicalDominance, 0, 1);
   morphology.branchDensity = clamp(morphology.branchDensity, 0, 1);
+  morphology.branchingRate = clamp(morphology.branchingRate, 0, 1);
+  morphology.branchAngle = clampRange(morphology.branchAngle, MORPHOLOGY_BOUNDS.branchAngle);
   morphology.crownWidth = clampRange(morphology.crownWidth, MORPHOLOGY_BOUNDS.crownWidth);
   morphology.crownHeight = clampRange(morphology.crownHeight, MORPHOLOGY_BOUNDS.crownHeight);
+  morphology.verticalBias = clamp(morphology.verticalBias, 0, 1);
+  morphology.lateralSpread = clamp(morphology.lateralSpread, 0, 1);
+  morphology.crownDensity = clamp(morphology.crownDensity, 0, 1);
+  morphology.crownRadius = clampRange(morphology.crownRadius, MORPHOLOGY_BOUNDS.crownRadius);
+  morphology.topFoliageBias = clamp(morphology.topFoliageBias, 0, 1);
+  morphology.basalSpread = clamp(morphology.basalSpread, 0, 1);
+  morphology.foliageDensity = clamp(morphology.foliageDensity, 0, 1);
   morphology.leafSize = clampRange(morphology.leafSize, MORPHOLOGY_BOUNDS.leafSize);
+  morphology.leafAspectRatio = clampRange(morphology.leafAspectRatio, MORPHOLOGY_BOUNDS.leafAspectRatio);
   morphology.leafDensity = clamp(morphology.leafDensity, 0, 1);
   morphology.topCanopyBias = clamp(morphology.topCanopyBias, 0, 1);
   morphology.groundCoverFactor = clamp(morphology.groundCoverFactor, 0, 1);
   morphology.uprightness = clamp(morphology.uprightness, 0, 1);
+  morphology.clumping = clamp(morphology.clumping, 0, 1);
   return morphology;
 }
 

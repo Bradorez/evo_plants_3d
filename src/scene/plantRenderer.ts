@@ -1,19 +1,25 @@
-import { InstancedMesh, Matrix, Mesh, Quaternion, TransformNode, Vector3 } from "@babylonjs/core";
+import { InstancedMesh, Mesh, Quaternion, TransformNode, Vector3 } from "@babylonjs/core";
 import type { Scene } from "@babylonjs/core";
-import { SPECIES_NONE, type PlantSpeciesDefinition, type PlantPhenotypeClass } from "../sim/PlantSpecies";
+import {
+  derivePlantRenderParameters,
+  SPECIES_NONE,
+  type PlantRenderParameters,
+  type PlantSpeciesDefinition,
+} from "../sim/PlantSpecies";
 import type { TerrainData } from "../sim/Terrain";
 import { createPlantSpeciesPrototype } from "./plantArchetypes";
 
 interface SpeciesRenderBucket {
   source: Mesh;
   instances: InstancedMesh[];
+  render: PlantRenderParameters;
 }
 
 /**
  * PlantRenderer translates the grid-based vegetation state into visible 3D
- * forms. It rebuilds instances only when the slow vegetation simulation
- * changes, so plant visuals stay inexpensive compared to the per-frame terrain
- * and water updates.
+ * forms. Prototypes are cached per species, and per-cell instance placement is
+ * driven by continuous morphology traits so small inherited changes show up as
+ * small visible changes rather than switching to a different phenotype bucket.
  */
 export class PlantRenderer {
   private readonly scene: Scene;
@@ -85,7 +91,7 @@ export class PlantRenderer {
         const worldX = x * terrain.cellSize - halfWidth;
         const worldZ = y * terrain.cellSize - halfHeight;
         const baseY = terrain.heights[index];
-        const instanceCount = this.getInstanceCount(species.phenotype, density[index], cellBiomass);
+        const instanceCount = this.getInstanceCount(species, bucket.render, density[index], cellBiomass);
 
         for (let instanceIndex = 0; instanceIndex < instanceCount; instanceIndex += 1) {
           const instance = bucket.source.createInstance(`plant-${speciesId}-${index}-${instanceIndex}`);
@@ -94,14 +100,26 @@ export class PlantRenderer {
           instance.renderingGroupId = 1;
           instance.alwaysSelectAsActiveMesh = true;
 
-          const offset = this.getInstanceOffset(terrain.cellSize, index, instanceIndex, species.phenotype);
-          const size = this.getInstanceScale(species, density[index], cellBiomass, instanceIndex);
+          const offset = this.getInstanceOffset(
+            terrain.cellSize,
+            index,
+            instanceIndex,
+            species,
+            bucket.render,
+          );
+          const size = this.getInstanceScale(
+            species,
+            bucket.render,
+            density[index],
+            cellBiomass,
+            instanceIndex,
+          );
           instance.position = new Vector3(worldX + offset.x, baseY + 0.02, worldZ + offset.z);
           instance.scaling = size;
           instance.rotationQuaternion = Quaternion.FromEulerAngles(
             0,
             this.getYaw(index, instanceIndex),
-            this.getLean(species.phenotype, index, instanceIndex),
+            this.getLean(species, index, instanceIndex),
           );
           instance.freezeWorldMatrix();
           bucket.instances.push(instance);
@@ -126,6 +144,7 @@ export class PlantRenderer {
       this.speciesBuckets.set(species.id, {
         source,
         instances: [],
+        render: derivePlantRenderParameters(species),
       });
     }
   }
@@ -151,32 +170,75 @@ export class PlantRenderer {
     this.speciesBuckets.clear();
   }
 
+  /**
+   * Coverage-heavy, low-woody plants should occupy more visual room inside a
+   * cell than tall isolated woody forms. This keeps density changes smooth and
+   * trait-driven rather than bucket-driven.
+   */
   private getInstanceCount(
-    phenotype: PlantPhenotypeClass,
+    species: PlantSpeciesDefinition,
+    render: PlantRenderParameters,
     densityClass: number,
     biomass: number,
   ): number {
-    if (phenotype === 0 || phenotype === 1 || phenotype === 6) {
-      return densityClass >= 3 ? 3 : densityClass === 2 ? 2 : biomass > 0.2 ? 2 : 1;
-    }
+    const morphology = species.morphology;
+    const coverageBias =
+      morphology.groundCoverFactor * 0.34 +
+      morphology.basalSpread * 0.24 +
+      (1 - morphology.woodiness) * 0.2 +
+      (1 - morphology.clumping) * 0.12 +
+      Math.min(render.stemCopies / 8, 1) * 0.1;
+    const woodyPenalty =
+      morphology.woodiness * 0.24 +
+      Math.min(morphology.maxHeight / 12, 1) * 0.16 +
+      morphology.apicalDominance * 0.12;
+    const desired =
+      1 +
+      coverageBias * 2.8 +
+      (densityClass >= 2 ? 0.4 : 0) +
+      (densityClass >= 3 ? 0.45 : 0) +
+      Math.max(0, biomass - 0.3) * 0.8 -
+      woodyPenalty * 1.9;
 
-    return densityClass >= 3 && biomass > 0.7 && (phenotype === 2 || phenotype === 5) ? 2 : 1;
+    return Math.max(1, Math.min(4, Math.round(desired)));
   }
 
+  /**
+   * Instance spread is derived from basal spread, clumping, and stem-cluster
+   * radius so descendants can become visibly tighter or looser without needing
+   * a phenotype-specific placement rule.
+   */
   private getInstanceOffset(
     cellSize: number,
     cellIndex: number,
     instanceIndex: number,
-    phenotype: PlantPhenotypeClass,
+    species: PlantSpeciesDefinition,
+    render: PlantRenderParameters,
   ): Vector3 {
-    const spread = phenotype === 0 || phenotype === 1 || phenotype === 6 ? cellSize * 0.22 : cellSize * 0.14;
+    const morphology = species.morphology;
+    const spread =
+      cellSize *
+      (
+        0.05 +
+        morphology.groundCoverFactor * 0.14 +
+        morphology.basalSpread * 0.08 +
+        render.stemClusterRadius * 0.05 +
+        (1 - morphology.clumping) * 0.08
+      );
     const angle = ((cellIndex * 37 + instanceIndex * 173) % 360) * (Math.PI / 180);
-    const radius = instanceIndex === 0 ? 0 : spread * (0.55 + (((cellIndex + instanceIndex * 13) % 7) / 10));
+    const radius =
+      instanceIndex === 0
+        ? 0
+        : spread *
+          (0.4 + (((cellIndex + instanceIndex * 13) % 7) / 10)) *
+          (0.72 + (1 - morphology.clumping) * 0.45);
+
     return new Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
   }
 
   private getInstanceScale(
     species: PlantSpeciesDefinition,
+    render: PlantRenderParameters,
     densityClass: number,
     biomass: number,
     instanceIndex: number,
@@ -185,12 +247,22 @@ export class PlantRenderer {
     const biomassScale = 0.46 + biomass * 0.82;
     const stagger = 0.92 + ((species.id * 17 + instanceIndex * 11) % 9) / 40;
     const uprightBias = 0.86 + species.morphology.uprightness * 0.24;
+    const crownScale =
+      0.72 +
+      Math.min(render.crownRadius / 3.2, 1) * 0.14 +
+      species.morphology.groundCoverFactor * 0.08 +
+      species.morphology.basalSpread * 0.08;
     const xzScale =
       biomassScale *
       densityScale *
       stagger *
-      (0.74 + species.morphology.crownWidth * 0.08 + species.morphology.groundCoverFactor * 0.06);
-    const yScale = biomassScale * densityScale * stagger * uprightBias;
+      crownScale;
+    const yScale =
+      biomassScale *
+      densityScale *
+      stagger *
+      uprightBias *
+      (0.84 + Math.min(render.heightScale / 8, 1) * 0.18);
 
     return new Vector3(xzScale, yScale, xzScale);
   }
@@ -200,14 +272,18 @@ export class PlantRenderer {
   }
 
   private getLean(
-    phenotype: PlantPhenotypeClass,
+    species: PlantSpeciesDefinition,
     cellIndex: number,
     instanceIndex: number,
   ): number {
-    if (phenotype === 3 || phenotype === 4 || phenotype === 5) {
-      return 0;
-    }
+    const morphology = species.morphology;
+    const leanMagnitude =
+      (1 - morphology.uprightness) * 0.1 +
+      (1 - morphology.verticalBias) * 0.06 +
+      morphology.groundCoverFactor * 0.03 +
+      morphology.lateralSpread * 0.03 -
+      morphology.woodiness * 0.04;
 
-    return ((((cellIndex * 19 + instanceIndex * 53) % 11) - 5) / 100);
+    return ((((cellIndex * 19 + instanceIndex * 53) % 11) - 5) / 5) * leanMagnitude;
   }
 }
