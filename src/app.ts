@@ -1,4 +1,5 @@
 import { createScene, frameCameraOnTerrain } from "./scene/createScene";
+import { PlantRenderer } from "./scene/plantRenderer";
 import { TerrainMeshRenderer } from "./scene/terrainMesh";
 import { WaterOverlayRenderer, type WaterOverlayViewOptions } from "./scene/waterOverlay";
 import { Simulation } from "./sim/Simulation";
@@ -13,6 +14,7 @@ import { createControls } from "./ui/controls";
 class TerrainHydrologyApp {
   private readonly simulation = new Simulation();
   private readonly sceneBundle;
+  private readonly plantRenderer;
   private readonly terrainMeshRenderer;
   private readonly waterOverlayRenderer;
   private readonly controls;
@@ -29,6 +31,7 @@ class TerrainHydrologyApp {
 
   public constructor(canvas: HTMLCanvasElement) {
     this.sceneBundle = createScene(canvas);
+    this.plantRenderer = new PlantRenderer(this.sceneBundle.scene);
     this.terrainMeshRenderer = new TerrainMeshRenderer(this.sceneBundle.scene);
     this.waterOverlayRenderer = new WaterOverlayRenderer(this.sceneBundle.scene);
     this.controls = createControls(
@@ -63,12 +66,14 @@ class TerrainHydrologyApp {
 
     this.rebuildTerrainVisuals();
     this.controls.setStats(this.simulation.getStats());
+    this.controls.setVegetationDebug(this.simulation.getVegetationDebugSummary());
     this.sceneBundle.engine.runRenderLoop(() => {
       this.updateFrame();
     });
   }
 
   private rebuildTerrainVisuals(): void {
+    this.plantRenderer.rebuild();
     this.terrainMeshRenderer.rebuild(this.simulation.terrain);
     this.terrainMeshRenderer.resetHydrologyResponse();
     this.waterOverlayRenderer.rebuild(this.simulation.terrain);
@@ -79,12 +84,14 @@ class TerrainHydrologyApp {
     this.simulation.reset();
     this.terrainMeshRenderer.resetHydrologyResponse();
     this.controls.setStats(this.simulation.getStats());
+    this.controls.setVegetationDebug(this.simulation.getVegetationDebugSummary());
   }
 
   private regenerateTerrain(): void {
     this.simulation.regenerate();
     this.rebuildTerrainVisuals();
     this.controls.setStats(this.simulation.getStats());
+    this.controls.setVegetationDebug(this.simulation.getVegetationDebugSummary());
   }
 
   private updateFrame(): void {
@@ -117,11 +124,21 @@ class TerrainHydrologyApp {
       this.viewOptions,
     );
 
+    this.plantRenderer.update(
+      this.simulation.terrain,
+      this.simulation.vegetationBiomass,
+      this.simulation.vegetationDensity,
+      this.simulation.vegetationSpeciesId,
+      this.simulation.getPlantSpeciesCatalog(),
+      this.simulation.vegetationRevision,
+    );
+
     this.sceneBundle.scene.render();
 
     this.statsAccumulator += realDeltaSeconds;
     if (this.statsAccumulator >= 0.15) {
       this.controls.setStats(this.simulation.getStats());
+      this.controls.setVegetationDebug(this.simulation.getVegetationDebugSummary());
       this.statsAccumulator = 0;
     }
   }

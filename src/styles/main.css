@@ -175,6 +175,20 @@ output {
   font-size: 1rem;
 }
 
+.debug-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.debug-copy {
+  margin-top: 0.5rem;
+  color: #aac3bd;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
 @media (max-width: 960px) {
   #app-shell {
     grid-template-columns: 1fr;

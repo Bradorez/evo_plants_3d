@@ -1,11 +1,23 @@
-import { clamp, lerp } from "../utils/math";
+import { clamp } from "../utils/math";
 import { valueNoise2D } from "../utils/noise";
 import type { TerrainData } from "./Terrain";
+import {
+  classifyPhenotype,
+  createInitialSpeciesCatalog,
+  ECOLOGY_PROFILE_DRYLAND,
+  ECOLOGY_PROFILE_MESIC,
+  ECOLOGY_PROFILE_WETLAND,
+  mutateSpecies,
+  phenotypeName,
+  PlantPhenotypeClass,
+  type PlantSpeciesDefinition,
+  SPECIES_NONE,
+} from "./PlantSpecies";
 
 export const VEGETATION_PROFILE_NONE = 255;
-export const VEGETATION_PROFILE_DRYLAND = 0;
-export const VEGETATION_PROFILE_MESIC = 1;
-export const VEGETATION_PROFILE_WETLAND = 2;
+export const VEGETATION_PROFILE_DRYLAND = ECOLOGY_PROFILE_DRYLAND;
+export const VEGETATION_PROFILE_MESIC = ECOLOGY_PROFILE_MESIC;
+export const VEGETATION_PROFILE_WETLAND = ECOLOGY_PROFILE_WETLAND;
 
 export interface VegetationSettings {
   growthRate: number;
@@ -18,30 +30,22 @@ export interface VegetationSettings {
   floodStressStrength: number;
   droughtStressStrength: number;
   slopeStressStrength: number;
+  mutationRate: number;
+  mutationSupportThreshold: number;
+  maxSpeciesCount: number;
 }
 
-interface VegetationProfilePreferences {
-  moistureCenter: number;
-  moistureTolerance: number;
-  persistentWetnessCenter: number;
-  persistentWetnessTolerance: number;
-  floodTolerance: number;
-  standingWaterTolerance: number;
-  slopeTolerance: number;
-  elevationPreference: number;
+export interface VegetationDebugSummary {
+  speciesCount: number;
+  phenotypeCounts: Record<string, number>;
 }
 
 /**
- * VegetationModel is the first ecological producer layered on top of the
- * moisture and terrain systems. It keeps vegetation state fully grid-based so
- * later systems such as species traits, succession, and mutation can build on
- * stable typed-array fields rather than one-off render logic.
- *
- * The model intentionally stays simple:
- * - biomass is continuous and slow-moving
- * - density classes are derived from biomass for easier rendering/debugging
- * - profile IDs capture broad ecological strategies, not species
- * - spread is purely local and deterministic, avoiding agent complexity
+ * VegetationModel now bridges ecological fields and heritable species data.
+ * Cells still keep a lightweight dominant-plant state, but that state now
+ * points to a species definition with separate ecological and morphology
+ * traits. This keeps the growth logic readable while giving rendering a stable
+ * phenotype target to visualize.
  */
 export class VegetationModel {
   public readonly settings: VegetationSettings = {
@@ -55,27 +59,40 @@ export class VegetationModel {
     floodStressStrength: 0.22,
     droughtStressStrength: 0.2,
     slopeStressStrength: 0.18,
+    mutationRate: 0.022,
+    mutationSupportThreshold: 0.48,
+    maxSpeciesCount: 48,
   };
 
   private readonly seed: number;
+  private speciesCatalog: PlantSpeciesDefinition[];
+  private nextSpeciesId: number;
+  private vegetationStepCounter = 0;
+
   private readonly biomass: Float32Array;
   private readonly nextBiomass: Float32Array;
   private readonly densityClass: Uint8Array;
-  private readonly profileId: Uint8Array;
-  private readonly suitability: Float32Array;
+  private readonly ecologyProfileId: Uint8Array;
+  private readonly dominantSpeciesId: Uint16Array;
+  private readonly phenotypeClass: Uint8Array;
   private readonly neighborSupport: Float32Array;
-  private readonly persistentChannelProxy: Float32Array;
+  private readonly nearbyWetness: Float32Array;
 
   public constructor(cellCount: number, seed: number) {
     this.seed = seed >>> 0;
+    this.speciesCatalog = createInitialSpeciesCatalog(this.seed);
+    this.nextSpeciesId = this.speciesCatalog.length;
+
     this.biomass = new Float32Array(cellCount);
     this.nextBiomass = new Float32Array(cellCount);
     this.densityClass = new Uint8Array(cellCount);
-    this.profileId = new Uint8Array(cellCount);
-    this.profileId.fill(VEGETATION_PROFILE_NONE);
-    this.suitability = new Float32Array(cellCount);
+    this.ecologyProfileId = new Uint8Array(cellCount);
+    this.ecologyProfileId.fill(VEGETATION_PROFILE_NONE);
+    this.dominantSpeciesId = new Uint16Array(cellCount);
+    this.dominantSpeciesId.fill(SPECIES_NONE);
+    this.phenotypeClass = new Uint8Array(cellCount);
     this.neighborSupport = new Float32Array(cellCount);
-    this.persistentChannelProxy = new Float32Array(cellCount);
+    this.nearbyWetness = new Float32Array(cellCount);
   }
 
   public getBiomass(): Float32Array {
@@ -87,24 +104,63 @@ export class VegetationModel {
   }
 
   public getProfileId(): Uint8Array {
-    return this.profileId;
+    return this.ecologyProfileId;
+  }
+
+  public getDominantSpeciesId(): Uint16Array {
+    return this.dominantSpeciesId;
+  }
+
+  public getPhenotypeClass(): Uint8Array {
+    return this.phenotypeClass;
+  }
+
+  public getSpeciesCatalog(): readonly PlantSpeciesDefinition[] {
+    return this.speciesCatalog;
+  }
+
+  public getDebugSummary(): VegetationDebugSummary {
+    const phenotypeCounts: Record<string, number> = {};
+
+    for (let index = 0; index < this.dominantSpeciesId.length; index += 1) {
+      const speciesId = this.dominantSpeciesId[index];
+      if (speciesId === SPECIES_NONE || this.biomass[index] < 0.05) {
+        continue;
+      }
+
+      const species = this.speciesCatalog[speciesId];
+      if (!species) {
+        continue;
+      }
+
+      const label = phenotypeName(species.phenotype);
+      phenotypeCounts[label] = (phenotypeCounts[label] ?? 0) + 1;
+    }
+
+    return {
+      speciesCount: this.speciesCatalog.length,
+      phenotypeCounts,
+    };
   }
 
   public reset(): void {
+    this.speciesCatalog = createInitialSpeciesCatalog(this.seed);
+    this.nextSpeciesId = this.speciesCatalog.length;
+    this.vegetationStepCounter = 0;
     this.biomass.fill(0);
     this.nextBiomass.fill(0);
     this.densityClass.fill(0);
-    this.profileId.fill(VEGETATION_PROFILE_NONE);
-    this.suitability.fill(0);
+    this.ecologyProfileId.fill(VEGETATION_PROFILE_NONE);
+    this.dominantSpeciesId.fill(SPECIES_NONE);
+    this.phenotypeClass.fill(0);
     this.neighborSupport.fill(0);
-    this.persistentChannelProxy.fill(0);
+    this.nearbyWetness.fill(0);
   }
 
   /**
-   * Initial seeding establishes a deterministic ecological baseline. Moisture
-   * layers may still be close to empty right after a simulation reset, so the
-   * seeding logic also considers rainfall pattern, slope, elevation context,
-   * and subtle noise so the map starts with plausible heterogeneity.
+   * Initial seeding chooses a dominant species for each plausible cell. The
+   * choice is deterministic and ecology-driven, so repeated seeds produce the
+   * same starting biomes while still leaving room for later mutation.
    */
   public initialize(
     terrain: TerrainData,
@@ -121,50 +177,48 @@ export class VegetationModel {
         const index = terrain.grid.index(x, y);
         const slope = this.sampleSlope(terrain, x, y);
         const basinFactor = this.sampleBasinFactor(terrain, x, y);
-        const elevation = terrain.heights[index];
-        const normalizedElevation = clamp(
-          (elevation - terrain.minHeight) / Math.max(terrain.maxHeight - terrain.minHeight, 1e-6),
-          0,
-          1,
-        );
+        const normalizedElevation = this.normalizeElevation(terrain, index);
         const seededMoisture = clamp(
-          soilMoisture[index] * 0.45 +
-            persistentWetness[index] * 0.25 +
-            rainIntensity * rainfallDistribution[index] * 0.22 +
-            basinFactor * 0.08,
+          soilMoisture[index] * 0.42 +
+            persistentWetness[index] * 0.24 +
+            rainIntensity * rainfallDistribution[index] * 0.24 +
+            basinFactor * 0.1,
           0,
           1,
         );
         const seededWetness = clamp(
-          persistentWetness[index] * 0.55 + basinFactor * 0.25 + seededMoisture * 0.2,
+          persistentWetness[index] * 0.52 + basinFactor * 0.28 + seededMoisture * 0.2,
           0,
           1,
         );
-        const flood = floodProne[index];
-        const selection = this.pickBestProfile(
+        const selection = this.pickBestSpecies(
           seededMoisture,
           seededWetness,
-          flood,
+          floodProne[index],
           0,
           slope,
           normalizedElevation,
         );
         const seedNoise = valueNoise2D(x * 0.18 + 11.7, y * 0.18 - 6.4, this.seed + 9011);
-        const terrainSupport = clamp((1 - slope) * 0.55 + basinFactor * 0.25 + (1 - normalizedElevation) * 0.2, 0, 1);
+        const terrainSupport = clamp(
+          (1 - slope) * 0.55 + basinFactor * 0.25 + (1 - normalizedElevation) * 0.2,
+          0,
+          1,
+        );
         const establishment = selection.score * 0.68 + terrainSupport * 0.22 + seedNoise * 0.1;
 
-        if (selection.score < 0.24 || establishment < 0.32 || flood > 0.78) {
+        if (selection.speciesId === SPECIES_NONE || selection.score < 0.22 || establishment < 0.31) {
           continue;
         }
 
         const initialBiomass = clamp(
-          0.12 + selection.score * 0.28 + terrainSupport * 0.16 - Math.max(0, flood - 0.55) * 0.2,
+          0.1 + selection.score * 0.32 + terrainSupport * 0.14 - Math.max(0, floodProne[index] - 0.58) * 0.18,
           0,
-          0.72,
+          0.76,
         );
 
         this.biomass[index] = initialBiomass;
-        this.profileId[index] = selection.profile;
+        this.assignSpeciesToCell(index, selection.speciesId);
       }
     }
 
@@ -172,10 +226,10 @@ export class VegetationModel {
   }
 
   /**
-   * Vegetation updates deliberately run on a slower ecological cadence. The
-   * model reads moisture and flood memory that have already been temporally
-   * smoothed, then nudges biomass toward or away from a local carrying
-   * capacity. Spread is local and deterministic so the map changes gradually.
+   * Vegetation updates on its own ecological cadence. Cells only hold one
+   * dominant species at a time, but that species can spread, get replaced by a
+   * better adapted neighbor, or mutate during colonization into a descendant
+   * species with slightly altered morphology and ecology.
    */
   public step(
     terrain: TerrainData,
@@ -189,26 +243,22 @@ export class VegetationModel {
       return;
     }
 
+    this.vegetationStepCounter += 1;
     this.updateNeighborhoodSignals(terrain, soilMoisture, persistentWetness);
 
     for (let y = 0; y < terrain.grid.height; y += 1) {
       for (let x = 0; x < terrain.grid.width; x += 1) {
         const index = terrain.grid.index(x, y);
         const slope = this.sampleSlope(terrain, x, y);
-        const elevation = terrain.heights[index];
-        const normalizedElevation = clamp(
-          (elevation - terrain.minHeight) / Math.max(terrain.maxHeight - terrain.minHeight, 1e-6),
-          0,
-          1,
-        );
+        const normalizedElevation = this.normalizeElevation(terrain, index);
         const moisture = soilMoisture[index];
         const wetness = persistentWetness[index];
         const flood = floodProne[index];
         const standingWater = clamp(waterDepth[index] / 0.05, 0, 1);
-        const channelSupport = this.persistentChannelProxy[index];
-        const support = clamp(this.neighborSupport[index] * 0.8 + channelSupport * 0.2, 0, 1);
-        const competition = support * this.settings.carryingCapacityStrength;
-        const bestSelection = this.pickBestProfile(
+        const support = this.neighborSupport[index];
+        const wetAdjacency = this.nearbyWetness[index];
+        const neighborCandidate = this.selectNeighborSpeciesCandidate(terrain, x, y);
+        const environmentCandidate = this.pickBestSpecies(
           moisture,
           wetness,
           flood,
@@ -216,79 +266,114 @@ export class VegetationModel {
           slope,
           normalizedElevation,
         );
-        const currentProfile = this.profileId[index];
+        const currentSpeciesId = this.dominantSpeciesId[index];
+        const currentSpecies = currentSpeciesId === SPECIES_NONE ? null : this.speciesCatalog[currentSpeciesId];
         const currentBiomass = this.biomass[index];
-        const currentSuitability =
-          currentProfile === VEGETATION_PROFILE_NONE
-            ? 0
-            : this.evaluateProfileSuitability(
-                currentProfile,
-                moisture,
-                wetness,
-                flood,
-                standingWater,
-                slope,
-                normalizedElevation,
-              );
-        const shouldAdoptNewProfile =
-          bestSelection.profile !== VEGETATION_PROFILE_NONE &&
-          (currentProfile === VEGETATION_PROFILE_NONE ||
-            bestSelection.score > currentSuitability + this.settings.reselectionThreshold ||
-            currentBiomass < 0.08);
-        const activeProfile =
-          shouldAdoptNewProfile && bestSelection.score > 0
-            ? bestSelection.profile
-            : currentProfile;
-        const suitability =
-          activeProfile === VEGETATION_PROFILE_NONE
-            ? 0
-            : this.evaluateProfileSuitability(
-                activeProfile,
-                moisture,
-                wetness,
-                flood,
-                standingWater,
-                slope,
-                normalizedElevation,
-              );
+        const currentSuitability = currentSpecies
+          ? this.evaluateSpeciesSuitability(
+              currentSpecies,
+              moisture,
+              wetness,
+              flood,
+              standingWater,
+              slope,
+              normalizedElevation,
+            )
+          : 0;
 
-        this.suitability[index] = suitability;
+        let targetSpeciesId = currentSpeciesId;
+        let targetSuitability = currentSuitability;
 
-        const carryingCapacity = clamp(suitability * (1 - competition * 0.45), 0, 1);
-        const droughtStress = clamp(0.28 - moisture, 0, 0.28) / 0.28;
-        const floodStress = clamp(flood - 0.64, 0, 0.36) / 0.36;
-        const slopeStress = clamp(slope - 0.72, 0, 0.28) / 0.28;
+        if (neighborCandidate.score > targetSuitability + this.settings.reselectionThreshold) {
+          targetSpeciesId = neighborCandidate.speciesId;
+          targetSuitability = neighborCandidate.score;
+        }
+
+        if (
+          environmentCandidate.score > targetSuitability + this.settings.reselectionThreshold * 1.12 &&
+          currentBiomass < 0.14
+        ) {
+          targetSpeciesId = environmentCandidate.speciesId;
+          targetSuitability = environmentCandidate.score;
+        }
+
+        const competition = support * this.settings.carryingCapacityStrength;
+        const carryingCapacity = clamp(
+          targetSuitability * (1 - competition * 0.45) * (0.88 + wetAdjacency * 0.12),
+          0,
+          1,
+        );
+        const droughtStress = clamp(
+          (this.resolveDroughtTolerance(targetSpeciesId) - moisture) /
+            Math.max(this.resolveDroughtTolerance(targetSpeciesId), 0.12),
+          0,
+          1,
+        );
+        const floodStress = clamp(
+          (flood - this.resolveFloodTolerance(targetSpeciesId)) /
+            Math.max(1 - this.resolveFloodTolerance(targetSpeciesId), 0.12),
+          0,
+          1,
+        );
+        const slopeStress = clamp(
+          (slope - this.resolveSlopeTolerance(targetSpeciesId)) /
+            Math.max(1 - this.resolveSlopeTolerance(targetSpeciesId), 0.12),
+          0,
+          1,
+        );
 
         let nextBiomass = currentBiomass;
 
-        if (currentBiomass > 0.001 && activeProfile !== VEGETATION_PROFILE_NONE) {
+        if (currentSpeciesId !== SPECIES_NONE && targetSpeciesId !== SPECIES_NONE) {
+          if (currentSpeciesId !== targetSpeciesId && currentBiomass < 0.1) {
+            this.assignSpeciesToCell(index, targetSpeciesId);
+          }
+
           const growthPotential = clamp(carryingCapacity - currentBiomass, 0, 1);
           const declinePressure = clamp(currentBiomass - carryingCapacity, 0, 1);
-          const stress =
-            droughtStress * this.settings.droughtStressStrength +
-            floodStress * this.settings.floodStressStrength +
-            slopeStress * this.settings.slopeStressStrength +
-            Math.max(0, standingWater - this.settings.standingWaterTolerance) * 0.24;
+          const standingWaterStress = Math.max(
+            0,
+            standingWater - this.resolveStandingWaterTolerance(this.dominantSpeciesId[index]),
+          );
 
-          nextBiomass += growthPotential * this.settings.growthRate * (0.35 + support * 0.65) * dtSeconds;
+          nextBiomass +=
+            growthPotential *
+            this.settings.growthRate *
+            (0.32 + support * 0.68) *
+            this.resolveVigor(this.dominantSpeciesId[index]) *
+            dtSeconds;
           nextBiomass -=
-            (declinePressure * this.settings.declineRate + stress * this.settings.declineRate * 1.6) *
+            (declinePressure * this.settings.declineRate +
+              droughtStress * this.settings.droughtStressStrength +
+              floodStress * this.settings.floodStressStrength +
+              slopeStress * this.settings.slopeStressStrength +
+              standingWaterStress * 0.24) *
             dtSeconds;
-        } else if (
-          bestSelection.profile !== VEGETATION_PROFILE_NONE &&
-          bestSelection.score >= this.settings.colonizationThreshold
-        ) {
-          const colonization =
-            bestSelection.score *
-            support *
-            this.settings.spreadRate *
-            (0.7 + channelSupport * 0.3) *
-            (0.55 + (1 - competition) * 0.45) *
-            dtSeconds;
+        } else {
+          const colonizer = neighborCandidate.speciesId !== SPECIES_NONE ? neighborCandidate : environmentCandidate;
 
-          nextBiomass = colonization;
-          if (nextBiomass > 0.002) {
-            this.profileId[index] = bestSelection.profile;
+          if (colonizer.speciesId !== SPECIES_NONE && colonizer.score >= this.settings.colonizationThreshold) {
+            const colonizerSpeciesId = this.maybeMutateColonizer(
+              colonizer.speciesId,
+              x,
+              y,
+              support,
+              colonizer.score,
+            );
+            const spreadAbility = this.resolveSpreadAbility(colonizerSpeciesId);
+            const vigor = this.resolveVigor(colonizerSpeciesId);
+            const colonization =
+              colonizer.score *
+              support *
+              this.settings.spreadRate *
+              spreadAbility *
+              (0.58 + vigor * 0.42) *
+              dtSeconds;
+
+            nextBiomass = colonization;
+            if (nextBiomass > 0.002) {
+              this.assignSpeciesToCell(index, colonizerSpeciesId);
+            }
           }
         }
 
@@ -296,9 +381,7 @@ export class VegetationModel {
 
         if (nextBiomass < 0.01) {
           nextBiomass = 0;
-          this.profileId[index] = VEGETATION_PROFILE_NONE;
-        } else if (activeProfile !== VEGETATION_PROFILE_NONE) {
-          this.profileId[index] = activeProfile;
+          this.clearCellSpecies(index);
         }
 
         this.nextBiomass[index] = nextBiomass;
@@ -312,16 +395,26 @@ export class VegetationModel {
   private refreshDerivedState(): void {
     for (let index = 0; index < this.biomass.length; index += 1) {
       const biomass = this.biomass[index];
+      const speciesId = this.dominantSpeciesId[index];
 
-      if (biomass < 0.08 || this.profileId[index] === VEGETATION_PROFILE_NONE) {
+      if (biomass < 0.08 || speciesId === SPECIES_NONE) {
         this.densityClass[index] = 0;
         if (biomass < 0.01) {
-          this.profileId[index] = VEGETATION_PROFILE_NONE;
+          this.clearCellSpecies(index);
         }
         continue;
       }
 
       this.densityClass[index] = biomass < 0.3 ? 1 : biomass < 0.62 ? 2 : 3;
+      const species = this.speciesCatalog[speciesId];
+      if (!species) {
+        this.clearCellSpecies(index);
+        this.densityClass[index] = 0;
+        continue;
+      }
+
+      this.ecologyProfileId[index] = species.ecologyProfile;
+      this.phenotypeClass[index] = species.phenotype;
     }
   }
 
@@ -335,7 +428,8 @@ export class VegetationModel {
         const index = terrain.grid.index(x, y);
         let biomassSum = this.biomass[index] * 0.38;
         let biomassWeight = 0.38;
-        let wetChannelSignal = clamp(soilMoisture[index] * 0.5 + persistentWetness[index] * 0.5, 0, 1) * 0.28;
+        let nearbyWetness =
+          clamp(soilMoisture[index] * 0.48 + persistentWetness[index] * 0.52, 0, 1) * 0.34;
 
         for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
           for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
@@ -353,36 +447,32 @@ export class VegetationModel {
             const weight = offsetX === 0 || offsetY === 0 ? 0.11 : 0.06;
             biomassSum += this.biomass[sampleIndex] * weight;
             biomassWeight += weight;
-            wetChannelSignal +=
-              clamp(soilMoisture[sampleIndex] * 0.55 + persistentWetness[sampleIndex] * 0.45, 0, 1) *
-              (weight * 0.22);
+            nearbyWetness +=
+              clamp(soilMoisture[sampleIndex] * 0.54 + persistentWetness[sampleIndex] * 0.46, 0, 1) *
+              (weight * 0.24);
           }
         }
 
         this.neighborSupport[index] = biomassWeight > 0 ? clamp(biomassSum / biomassWeight, 0, 1) : 0;
-        this.persistentChannelProxy[index] = clamp(wetChannelSignal, 0, 1);
+        this.nearbyWetness[index] = clamp(nearbyWetness, 0, 1);
       }
     }
   }
 
-  private pickBestProfile(
+  private pickBestSpecies(
     moisture: number,
     persistentWetness: number,
     floodProne: number,
     standingWater: number,
     slope: number,
     normalizedElevation: number,
-  ): { profile: number; score: number } {
-    let bestProfile = VEGETATION_PROFILE_NONE;
+  ): { speciesId: number; score: number } {
+    let bestSpeciesId = SPECIES_NONE;
     let bestScore = 0;
 
-    for (const profile of [
-      VEGETATION_PROFILE_DRYLAND,
-      VEGETATION_PROFILE_MESIC,
-      VEGETATION_PROFILE_WETLAND,
-    ]) {
-      const score = this.evaluateProfileSuitability(
-        profile,
+    for (const species of this.speciesCatalog) {
+      const score = this.evaluateSpeciesSuitability(
+        species,
         moisture,
         persistentWetness,
         floodProne,
@@ -393,15 +483,15 @@ export class VegetationModel {
 
       if (score > bestScore) {
         bestScore = score;
-        bestProfile = profile;
+        bestSpeciesId = species.id;
       }
     }
 
-    return { profile: bestProfile, score: bestScore };
+    return { speciesId: bestSpeciesId, score: bestScore };
   }
 
-  private evaluateProfileSuitability(
-    profile: number,
+  private evaluateSpeciesSuitability(
+    species: PlantSpeciesDefinition,
     moisture: number,
     persistentWetness: number,
     floodProne: number,
@@ -409,87 +499,179 @@ export class VegetationModel {
     slope: number,
     normalizedElevation: number,
   ): number {
-    const preferences = this.getProfilePreferences(profile);
-    const moistureFit = this.gaussianLikeFit(
+    const ecology = species.ecology;
+    const moistureFit = this.preferenceFit(
       moisture,
-      preferences.moistureCenter,
-      preferences.moistureTolerance,
+      ecology.moisturePreference,
+      ecology.moistureTolerance,
     );
-    const wetnessFit = this.gaussianLikeFit(
+    const wetnessFit = this.preferenceFit(
       persistentWetness,
-      preferences.persistentWetnessCenter,
-      preferences.persistentWetnessTolerance,
+      ecology.persistentWetnessPreference,
+      Math.max(ecology.moistureTolerance * 0.9, 0.12),
+    );
+    const droughtPenalty = clamp(
+      (ecology.droughtTolerance - moisture) / Math.max(ecology.droughtTolerance, 0.12),
+      0,
+      1,
     );
     const floodPenalty = clamp(
-      (floodProne - preferences.floodTolerance) / Math.max(1 - preferences.floodTolerance, 1e-6),
+      (floodProne - ecology.floodTolerance) / Math.max(1 - ecology.floodTolerance, 0.12),
       0,
       1,
     );
     const standingWaterPenalty = clamp(
-      (standingWater - preferences.standingWaterTolerance) /
-        Math.max(1 - preferences.standingWaterTolerance, 1e-6),
+      (standingWater - ecology.standingWaterTolerance) /
+        Math.max(1 - ecology.standingWaterTolerance, 0.12),
       0,
       1,
     );
     const slopePenalty = clamp(
-      (slope - preferences.slopeTolerance) / Math.max(1 - preferences.slopeTolerance, 1e-6),
+      (slope - ecology.slopeTolerance) / Math.max(1 - ecology.slopeTolerance, 0.12),
       0,
       1,
     );
-    const elevationFit = 1 - Math.abs(normalizedElevation - preferences.elevationPreference) * 1.35;
-    const baseSuitability =
-      moistureFit * 0.4 + wetnessFit * 0.26 + clamp(elevationFit, 0, 1) * 0.1 + (1 - slopePenalty) * 0.14;
-    const waterStress = floodPenalty * 0.42 + standingWaterPenalty * 0.36 + slopePenalty * 0.22;
-    const channelBonus =
-      profile === VEGETATION_PROFILE_WETLAND
-        ? this.settings.spreadRate * 0.2
-        : profile === VEGETATION_PROFILE_MESIC
-          ? 0.01
-          : 0;
+    const elevationBias =
+      species.ecologyProfile === VEGETATION_PROFILE_DRYLAND
+        ? normalizedElevation * 0.12
+        : species.ecologyProfile === VEGETATION_PROFILE_WETLAND
+          ? (1 - normalizedElevation) * 0.14
+          : 0.08;
 
-    return clamp(baseSuitability + channelBonus - waterStress, 0, 1);
+    return clamp(
+      moistureFit * 0.36 +
+        wetnessFit * 0.24 +
+        ecology.vigor * 0.16 +
+        (1 - slopePenalty) * 0.12 +
+        elevationBias -
+        droughtPenalty * 0.2 -
+        floodPenalty * 0.26 -
+        standingWaterPenalty * 0.22,
+      0,
+      1,
+    );
   }
 
-  private getProfilePreferences(profile: number): VegetationProfilePreferences {
-    switch (profile) {
-      case VEGETATION_PROFILE_DRYLAND:
-        return {
-          moistureCenter: 0.2,
-          moistureTolerance: 0.3,
-          persistentWetnessCenter: 0.18,
-          persistentWetnessTolerance: 0.24,
-          floodTolerance: 0.24,
-          standingWaterTolerance: 0.06,
-          slopeTolerance: 0.78,
-          elevationPreference: 0.66,
-        };
-      case VEGETATION_PROFILE_WETLAND:
-        return {
-          moistureCenter: 0.74,
-          moistureTolerance: 0.28,
-          persistentWetnessCenter: 0.76,
-          persistentWetnessTolerance: 0.3,
-          floodTolerance: 0.78,
-          standingWaterTolerance: 0.36,
-          slopeTolerance: 0.42,
-          elevationPreference: 0.28,
-        };
-      case VEGETATION_PROFILE_MESIC:
-      default:
-        return {
-          moistureCenter: 0.48,
-          moistureTolerance: 0.26,
-          persistentWetnessCenter: 0.42,
-          persistentWetnessTolerance: 0.24,
-          floodTolerance: 0.46,
-          standingWaterTolerance: 0.12,
-          slopeTolerance: 0.58,
-          elevationPreference: 0.46,
-        };
+  private selectNeighborSpeciesCandidate(
+    terrain: TerrainData,
+    x: number,
+    y: number,
+  ): { speciesId: number; score: number } {
+    let bestSpeciesId = SPECIES_NONE;
+    let bestScore = 0;
+
+    for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+      for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+        if (offsetX === 0 && offsetY === 0) {
+          continue;
+        }
+
+        const sampleX = x + offsetX;
+        const sampleY = y + offsetY;
+        if (!terrain.grid.isInside(sampleX, sampleY)) {
+          continue;
+        }
+
+        const sampleIndex = terrain.grid.index(sampleX, sampleY);
+        const speciesId = this.dominantSpeciesId[sampleIndex];
+        if (speciesId === SPECIES_NONE) {
+          continue;
+        }
+
+        const weight = (offsetX === 0 || offsetY === 0 ? 1 : 0.76) * this.biomass[sampleIndex];
+        if (weight > bestScore) {
+          bestScore = weight;
+          bestSpeciesId = speciesId;
+        }
+      }
     }
+
+    return { speciesId: bestSpeciesId, score: clamp(bestScore, 0, 1) };
   }
 
-  private gaussianLikeFit(value: number, center: number, tolerance: number): number {
+  private maybeMutateColonizer(
+    speciesId: number,
+    x: number,
+    y: number,
+    support: number,
+    suitability: number,
+  ): number {
+    if (
+      speciesId === SPECIES_NONE ||
+      this.speciesCatalog.length >= this.settings.maxSpeciesCount ||
+      support < this.settings.mutationSupportThreshold ||
+      suitability < 0.52
+    ) {
+      return speciesId;
+    }
+
+    const trigger = valueNoise2D(
+      x * 0.37 + this.vegetationStepCounter * 0.11,
+      y * 0.37 - this.vegetationStepCounter * 0.07,
+      this.seed + speciesId * 9157,
+    );
+
+    if (trigger > this.settings.mutationRate) {
+      return speciesId;
+    }
+
+    const parent = this.speciesCatalog[speciesId];
+    if (!parent) {
+      return speciesId;
+    }
+
+    const descendant = mutateSpecies(parent, this.nextSpeciesId, this.seed + this.vegetationStepCounter * 37);
+    descendant.phenotype = classifyPhenotype(descendant.morphology);
+    this.speciesCatalog = [...this.speciesCatalog, descendant];
+    this.nextSpeciesId += 1;
+    return descendant.id;
+  }
+
+  private assignSpeciesToCell(index: number, speciesId: number): void {
+    const species = this.speciesCatalog[speciesId];
+    if (!species) {
+      this.clearCellSpecies(index);
+      return;
+    }
+
+    this.dominantSpeciesId[index] = species.id;
+    this.ecologyProfileId[index] = species.ecologyProfile;
+    this.phenotypeClass[index] = species.phenotype;
+  }
+
+  private clearCellSpecies(index: number): void {
+    this.dominantSpeciesId[index] = SPECIES_NONE;
+    this.ecologyProfileId[index] = VEGETATION_PROFILE_NONE;
+    this.phenotypeClass[index] = 0;
+  }
+
+  private resolveDroughtTolerance(speciesId: number): number {
+    return speciesId === SPECIES_NONE ? 0.22 : this.speciesCatalog[speciesId]?.ecology.droughtTolerance ?? 0.22;
+  }
+
+  private resolveFloodTolerance(speciesId: number): number {
+    return speciesId === SPECIES_NONE ? 0.28 : this.speciesCatalog[speciesId]?.ecology.floodTolerance ?? 0.28;
+  }
+
+  private resolveStandingWaterTolerance(speciesId: number): number {
+    return speciesId === SPECIES_NONE
+      ? this.settings.standingWaterTolerance
+      : this.speciesCatalog[speciesId]?.ecology.standingWaterTolerance ?? this.settings.standingWaterTolerance;
+  }
+
+  private resolveSlopeTolerance(speciesId: number): number {
+    return speciesId === SPECIES_NONE ? 0.5 : this.speciesCatalog[speciesId]?.ecology.slopeTolerance ?? 0.5;
+  }
+
+  private resolveSpreadAbility(speciesId: number): number {
+    return speciesId === SPECIES_NONE ? 0.25 : this.speciesCatalog[speciesId]?.ecology.spreadAbility ?? 0.25;
+  }
+
+  private resolveVigor(speciesId: number): number {
+    return speciesId === SPECIES_NONE ? 0.5 : this.speciesCatalog[speciesId]?.ecology.vigor ?? 0.5;
+  }
+
+  private preferenceFit(value: number, center: number, tolerance: number): number {
     return clamp(1 - Math.abs(value - center) / Math.max(tolerance, 1e-6), 0, 1);
   }
 
@@ -530,5 +712,13 @@ export class VegetationModel {
     }
 
     return clamp((neighborSum / neighborCount - center) / 2.6, 0, 1);
+  }
+
+  private normalizeElevation(terrain: TerrainData, index: number): number {
+    return clamp(
+      (terrain.heights[index] - terrain.minHeight) / Math.max(terrain.maxHeight - terrain.minHeight, 1e-6),
+      0,
+      1,
+    );
   }
 }

@@ -1,4 +1,5 @@
 import type { SimulationStats } from "../sim/Simulation";
+import type { VegetationDebugSummary } from "../sim/Vegetation";
 import type { WaterOverlayViewOptions } from "../scene/waterOverlay";
 
 export interface ControlsCallbacks {
@@ -20,6 +21,7 @@ export interface ControlsInitialState {
 export interface ControlsApi {
   setRunning: (running: boolean) => void;
   setStats: (stats: SimulationStats) => void;
+  setVegetationDebug: (summary: VegetationDebugSummary) => void;
   getViewOptions: () => WaterOverlayViewOptions;
 }
 
@@ -47,6 +49,8 @@ export function createControls(
   const timeValue = queryElement<HTMLElement>("timeValue");
   const waterValue = queryElement<HTMLElement>("waterValue");
   const peakFlowValue = queryElement<HTMLElement>("peakFlowValue");
+  const plantSpeciesValue = queryElement<HTMLElement>("plantSpeciesValue");
+  const plantPhenotypeValue = queryElement<HTMLElement>("plantPhenotypeValue");
 
   let isRunning = initialState.isRunning;
 
@@ -120,6 +124,14 @@ export function createControls(
       timeValue.textContent = `${stats.elapsedTimeSeconds.toFixed(1)} s`;
       waterValue.textContent = stats.totalWater.toFixed(3);
       peakFlowValue.textContent = stats.peakFlow.toFixed(3);
+    },
+    setVegetationDebug: (summary: VegetationDebugSummary) => {
+      const entries = Object.entries(summary.phenotypeCounts).sort((left, right) => right[1] - left[1]);
+      plantSpeciesValue.textContent = summary.speciesCount.toString();
+      plantPhenotypeValue.textContent =
+        entries.length > 0
+          ? entries.map(([label, count]) => `${label} ${count}`).join(", ")
+          : "no established plant forms";
     },
     getViewOptions: () => ({
       showRivers: riverViewInput.checked,

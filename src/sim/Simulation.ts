@@ -1,9 +1,10 @@
 import { ErosionModel } from "./Erosion";
 import { HydrologyModel } from "./Hydrology";
 import { MoistureModel } from "./Moisture";
+import type { PlantSpeciesDefinition } from "./PlantSpecies";
 import { RainfallModel } from "./Rainfall";
 import { recomputeTerrainBounds, TerrainData, TerrainGenerator } from "./Terrain";
-import { VegetationModel } from "./Vegetation";
+import { type VegetationDebugSummary, VegetationModel } from "./Vegetation";
 import { WaterBalanceModel } from "./WaterBalance";
 
 export interface SimulationSchedule {
@@ -71,6 +72,9 @@ export class Simulation {
   public vegetationBiomass: Float32Array;
   public vegetationDensity: Uint8Array;
   public vegetationProfile: Uint8Array;
+  public vegetationSpeciesId: Uint16Array;
+  public vegetationPhenotype: Uint8Array;
+  public vegetationRevision = 0;
   public readonly rainfall: RainfallModel;
   public readonly schedule: SimulationSchedule;
 
@@ -133,6 +137,8 @@ export class Simulation {
     this.vegetationBiomass = this.vegetation.getBiomass();
     this.vegetationDensity = this.vegetation.getDensityClass();
     this.vegetationProfile = this.vegetation.getProfileId();
+    this.vegetationSpeciesId = this.vegetation.getDominantSpeciesId();
+    this.vegetationPhenotype = this.vegetation.getPhenotypeClass();
     this.initializeVegetation();
   }
 
@@ -228,11 +234,21 @@ export class Simulation {
     this.vegetationBiomass = this.vegetation.getBiomass();
     this.vegetationDensity = this.vegetation.getDensityClass();
     this.vegetationProfile = this.vegetation.getProfileId();
+    this.vegetationSpeciesId = this.vegetation.getDominantSpeciesId();
+    this.vegetationPhenotype = this.vegetation.getPhenotypeClass();
     this.initializeVegetation();
   }
 
   public setRainIntensity(intensity: number): void {
     this.rainfall.setIntensity(intensity);
+  }
+
+  public getPlantSpeciesCatalog(): readonly PlantSpeciesDefinition[] {
+    return this.vegetation.getSpeciesCatalog();
+  }
+
+  public getVegetationDebugSummary(): VegetationDebugSummary {
+    return this.vegetation.getDebugSummary();
   }
 
   public getStats(): SimulationStats {
@@ -404,6 +420,9 @@ export class Simulation {
     this.vegetationBiomass = this.vegetation.getBiomass();
     this.vegetationDensity = this.vegetation.getDensityClass();
     this.vegetationProfile = this.vegetation.getProfileId();
+    this.vegetationSpeciesId = this.vegetation.getDominantSpeciesId();
+    this.vegetationPhenotype = this.vegetation.getPhenotypeClass();
+    this.vegetationRevision += 1;
   }
 
   private initializeVegetation(): void {
@@ -418,5 +437,8 @@ export class Simulation {
     this.vegetationBiomass = this.vegetation.getBiomass();
     this.vegetationDensity = this.vegetation.getDensityClass();
     this.vegetationProfile = this.vegetation.getProfileId();
+    this.vegetationSpeciesId = this.vegetation.getDominantSpeciesId();
+    this.vegetationPhenotype = this.vegetation.getPhenotypeClass();
+    this.vegetationRevision += 1;
   }
 }
