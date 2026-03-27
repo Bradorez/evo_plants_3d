@@ -257,11 +257,14 @@ function buildPalm(parts: Mesh[], scene: Scene, render: ReturnType<typeof derive
 }
 
 function buildReed(parts: Mesh[], scene: Scene, render: ReturnType<typeof derivePlantRenderParameters>, palette: ReturnType<typeof getSpeciesDisplayColor>): void {
-  const stemCount = Math.max(4, Math.min(8, render.stemCopies + 1));
+  const stemCount = Math.max(3, Math.min(6, render.stemCopies));
 
   for (let index = 0; index < stemCount; index += 1) {
     const angle = (Math.PI * 2 * index) / stemCount;
-    const radius = 0.08 + (index % 2) * 0.05;
+    // Reeds should read as a looser stand, not a tight bouquet. Spreading the
+    // stems farther inside each clump makes adjacent reed cells blend together
+    // more naturally across the marsh.
+    const radius = 0.15 + (index % 2) * 0.08 + Math.floor(index / 2) * 0.035;
     const stemHeight = render.heightScale * (0.72 + (index % 3) * 0.08);
     const stem = MeshBuilder.CreateCylinder(`reed-stem-${index}`, {
       height: stemHeight,

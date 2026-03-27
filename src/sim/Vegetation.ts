@@ -257,10 +257,18 @@ export class VegetationModel {
           continue;
         }
 
+        // Keep the initial landscape noticeably sparser so vegetation has room
+        // to expand through the simulation instead of starting close to a
+        // mature cover state.
         const initialBiomass = clamp(
-          0.1 + selection.score * 0.32 + terrainSupport * 0.14 - Math.max(0, floodProne[index] - 0.58) * 0.18,
+          (
+            0.1 +
+            selection.score * 0.32 +
+            terrainSupport * 0.14 -
+            Math.max(0, floodProne[index] - 0.58) * 0.18
+          ) * 0.5,
           0,
-          0.76,
+          0.38,
         );
 
         this.biomass[index] = initialBiomass;
