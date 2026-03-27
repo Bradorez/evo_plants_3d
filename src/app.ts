@@ -24,6 +24,7 @@ class TerrainHydrologyApp {
     showRivers: true,
     showWaterDepth: true,
     showMoisture: false,
+    showVegetation: false,
   };
 
   public constructor(canvas: HTMLCanvasElement) {
@@ -101,8 +102,12 @@ class TerrainHydrologyApp {
       this.simulation.soilMoisture,
       this.simulation.persistentWetness,
       this.simulation.floodProne,
+      this.simulation.vegetationBiomass,
+      this.simulation.vegetationDensity,
+      this.simulation.vegetationProfile,
       simulatedDeltaSeconds,
       this.viewOptions.showMoisture,
+      this.viewOptions.showVegetation,
     );
 
     this.waterOverlayRenderer.update(

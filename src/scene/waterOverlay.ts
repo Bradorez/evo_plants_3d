@@ -13,6 +13,7 @@ export interface WaterOverlayViewOptions {
   showRivers: boolean;
   showWaterDepth: boolean;
   showMoisture: boolean;
+  showVegetation: boolean;
 }
 
 /**

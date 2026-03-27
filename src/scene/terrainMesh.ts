@@ -7,6 +7,12 @@ import {
 } from "@babylonjs/core";
 import type { Scene } from "@babylonjs/core";
 import type { TerrainData } from "../sim/Terrain";
+import {
+  VEGETATION_PROFILE_DRYLAND,
+  VEGETATION_PROFILE_MESIC,
+  VEGETATION_PROFILE_NONE,
+  VEGETATION_PROFILE_WETLAND,
+} from "../sim/Vegetation";
 import { clamp, inverseLerp, lerp } from "../utils/math";
 
 /**
@@ -20,6 +26,7 @@ import { clamp, inverseLerp, lerp } from "../utils/math";
  * - the simulation terrain heightmap is never mutated
  * - wetness and channel masks live only in the renderer
  * - persistent flow leaves visual memory, not destructive erosion
+ * - vegetation is treated as another derived ecological field layered on top
  */
 export class TerrainMeshRenderer {
   private readonly scene: Scene;
@@ -327,8 +334,12 @@ export class TerrainMeshRenderer {
     soilMoisture: Float32Array,
     persistentWetness: Float32Array,
     floodProne: Float32Array,
+    vegetationBiomass: Float32Array,
+    vegetationDensity: Uint8Array,
+    vegetationProfile: Uint8Array,
     dtSeconds: number,
     showMoisture: boolean,
+    showVegetation: boolean,
   ): void {
     if (
       !this.mesh ||
@@ -337,7 +348,10 @@ export class TerrainMeshRenderer {
       flowAccumulation.length !== this.topVertexCount ||
       soilMoisture.length !== this.topVertexCount ||
       persistentWetness.length !== this.topVertexCount ||
-      floodProne.length !== this.topVertexCount
+      floodProne.length !== this.topVertexCount ||
+      vegetationBiomass.length !== this.topVertexCount ||
+      vegetationDensity.length !== this.topVertexCount ||
+      vegetationProfile.length !== this.topVertexCount
     ) {
       return;
     }
@@ -400,6 +414,9 @@ export class TerrainMeshRenderer {
         1,
       );
       const floodMemory = floodProne[index];
+      const vegetation = vegetationBiomass[index];
+      const vegetationClass = vegetationDensity[index];
+      const plantProfile = vegetationProfile[index];
       const wetness = clamp(
         nearbyWater * 0.55 +
           water * 0.45 +
@@ -417,8 +434,28 @@ export class TerrainMeshRenderer {
         shoreline * persistentChannel * 0.028;
       const positionOffset = index * 3;
       const colorOffset = index * 4;
-      const color = showMoisture
-        ? this.getMoistureVisualizationColor(
+      const hydrologyColor = this.getHydrologyTintedColor(
+        this.elevationField[index],
+        slope,
+        wetness,
+        saturation,
+        shoreline,
+        persistentChannel,
+        ecologicalMoisture,
+        floodMemory,
+      );
+      const color = showVegetation
+        ? this.getVegetationVisualizationColor(
+            hydrologyColor,
+            vegetation,
+            vegetationClass,
+            plantProfile,
+            ecologicalMoisture,
+            floodMemory,
+            water,
+          )
+        : showMoisture
+          ? this.getMoistureVisualizationColor(
             this.elevationField[index],
             slope,
             ecologicalMoisture,
@@ -426,16 +463,14 @@ export class TerrainMeshRenderer {
             floodMemory,
             water,
           )
-        : this.getHydrologyTintedColor(
-            this.elevationField[index],
-            slope,
-            wetness,
-            saturation,
-            shoreline,
-            persistentChannel,
-            ecologicalMoisture,
-            floodMemory,
-          );
+          : this.applyVegetationTint(
+              hydrologyColor,
+              vegetation,
+              vegetationClass,
+              plantProfile,
+              ecologicalMoisture,
+              floodMemory,
+            );
 
       this.dynamicPositions[positionOffset + 1] = this.baseTopHeights[index] - incision;
       this.occluderPositions[positionOffset + 1] = this.dynamicPositions[positionOffset + 1] + this.occluderLift;
@@ -692,6 +727,95 @@ export class TerrainMeshRenderer {
         0.36,
       );
     return [r * darken, g * darken, b * darken];
+  }
+
+  /**
+   * Vegetation tinting is intentionally restrained in the default terrain view.
+   * It should help the landscape read ecologically without overwhelming the
+   * rock-and-water structure that remains the primary visual signal.
+   */
+  private applyVegetationTint(
+    base: [number, number, number],
+    biomass: number,
+    densityClass: number,
+    profile: number,
+    ecologicalMoisture: number,
+    floodMemory: number,
+  ): [number, number, number] {
+    if (profile === VEGETATION_PROFILE_NONE || biomass <= 0.02 || densityClass === 0) {
+      return base;
+    }
+
+    const tint = this.getVegetationProfileColor(profile);
+    const densityStrength = densityClass === 1 ? 0.18 : densityClass === 2 ? 0.32 : 0.46;
+    const ecologicalBoost =
+      profile === VEGETATION_PROFILE_WETLAND
+        ? floodMemory * 0.16 + ecologicalMoisture * 0.14
+        : ecologicalMoisture * 0.12;
+    const blend = clamp(biomass * densityStrength + ecologicalBoost, 0, 0.58);
+
+    return [
+      lerp(base[0], tint[0], blend),
+      lerp(base[1], tint[1], blend),
+      lerp(base[2], tint[2], blend),
+    ];
+  }
+
+  /**
+   * Vegetation view is a debug-style ecology palette rather than a literal
+   * foliage renderer. It separates sparse, medium, and dense growth while
+   * keeping the broad plant strategy visible through profile-specific hues.
+   */
+  private getVegetationVisualizationColor(
+    base: [number, number, number],
+    biomass: number,
+    densityClass: number,
+    profile: number,
+    ecologicalMoisture: number,
+    floodMemory: number,
+    surfaceWater: number,
+  ): [number, number, number] {
+    if (biomass <= 0.02 || densityClass === 0 || profile === VEGETATION_PROFILE_NONE) {
+      const barren = [0.34, 0.27, 0.18] as const;
+      const floodShadow = clamp(floodMemory * 0.2 + surfaceWater * 0.18, 0, 0.28);
+      return [
+        lerp(base[0], barren[0], 0.7) * (1 - floodShadow),
+        lerp(base[1], barren[1], 0.7) * (1 - floodShadow * 0.85),
+        lerp(base[2], barren[2], 0.7),
+      ];
+    }
+
+    const sparse = [0.48, 0.44, 0.22] as const;
+    const tint = this.getVegetationProfileColor(profile);
+    const wetlandShadow = profile === VEGETATION_PROFILE_WETLAND ? floodMemory * 0.16 : 0;
+    const densityBlend = densityClass === 1 ? 0.36 : densityClass === 2 ? 0.6 : 0.82;
+    const moistureLift = clamp(ecologicalMoisture * 0.12, 0, 0.12);
+    let r = lerp(sparse[0], tint[0], densityBlend);
+    let g = lerp(sparse[1], tint[1], densityBlend);
+    let b = lerp(sparse[2], tint[2], densityBlend);
+
+    r = Math.min(1, r + moistureLift * 0.4);
+    g = Math.min(1, g + moistureLift);
+    b = Math.min(1, b + moistureLift * 0.3 + wetlandShadow);
+
+    const reveal = clamp(0.2 + biomass * 0.8, 0.2, 0.95);
+    return [
+      lerp(base[0] * 0.74, r, reveal),
+      lerp(base[1] * 0.78, g, reveal),
+      lerp(base[2] * 0.7, b, reveal),
+    ];
+  }
+
+  private getVegetationProfileColor(profile: number): [number, number, number] {
+    switch (profile) {
+      case VEGETATION_PROFILE_DRYLAND:
+        return [0.55, 0.53, 0.24];
+      case VEGETATION_PROFILE_WETLAND:
+        return [0.17, 0.46, 0.32];
+      case VEGETATION_PROFILE_MESIC:
+      default:
+        return [0.26, 0.5, 0.2];
+    }
   }
 
   /**

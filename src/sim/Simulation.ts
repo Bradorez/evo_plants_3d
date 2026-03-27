@@ -3,16 +3,19 @@ import { HydrologyModel } from "./Hydrology";
 import { MoistureModel } from "./Moisture";
 import { RainfallModel } from "./Rainfall";
 import { recomputeTerrainBounds, TerrainData, TerrainGenerator } from "./Terrain";
+import { VegetationModel } from "./Vegetation";
 import { WaterBalanceModel } from "./WaterBalance";
 
 export interface SimulationSchedule {
   hydrologyStepSeconds: number;
   erosionStepSeconds: number;
   ecologyStepSeconds: number;
+  vegetationStepSeconds: number;
   slowProcessStepSeconds: number;
   maxHydrologySubstepsPerAdvance: number;
   maxErosionSubstepsPerAdvance: number;
   maxEcologySubstepsPerAdvance: number;
+  maxVegetationSubstepsPerAdvance: number;
   maxSlowSubstepsPerAdvance: number;
   maxAdvanceSeconds: number;
 }
@@ -37,10 +40,12 @@ const DEFAULT_SCHEDULE: SimulationSchedule = {
   hydrologyStepSeconds: 1 / 30,
   erosionStepSeconds: 1 / 6,
   ecologyStepSeconds: 0.25,
+  vegetationStepSeconds: 0.75,
   slowProcessStepSeconds: 0.5,
   maxHydrologySubstepsPerAdvance: 10,
   maxErosionSubstepsPerAdvance: 4,
   maxEcologySubstepsPerAdvance: 3,
+  maxVegetationSubstepsPerAdvance: 2,
   maxSlowSubstepsPerAdvance: 2,
   maxAdvanceSeconds: 0.2,
 };
@@ -50,6 +55,7 @@ const DEFAULT_SCHEDULE: SimulationSchedule = {
  * and slower long-timescale terrain maintenance. The scheduler is explicit:
  * - fast cadence: rainfall + hydrology + water balance
  * - medium cadence: erosion/deposition
+ * - ecological cadences: moisture response and slower vegetation dynamics
  * - slow cadence: terrain settling / relaxation
  *
  * Rendering remains frame-based, but simulation advances by fixed internal
@@ -62,18 +68,23 @@ export class Simulation {
   public soilMoisture: Float32Array;
   public persistentWetness: Float32Array;
   public floodProne: Float32Array;
+  public vegetationBiomass: Float32Array;
+  public vegetationDensity: Uint8Array;
+  public vegetationProfile: Uint8Array;
   public readonly rainfall: RainfallModel;
   public readonly schedule: SimulationSchedule;
 
   private hydrology: HydrologyModel;
   private erosion: ErosionModel;
   private moisture: MoistureModel;
+  private vegetation: VegetationModel;
   private readonly waterBalance: WaterBalanceModel;
   private elapsedTimeSeconds = 0;
   private peakFlow = 0;
   private hydrologyAccumulator = 0;
   private erosionAccumulator = 0;
   private ecologyAccumulator = 0;
+  private vegetationAccumulator = 0;
   private slowProcessAccumulator = 0;
   private readonly resolution: number;
   private readonly cellSize: number;
@@ -115,9 +126,14 @@ export class Simulation {
       this.hydrology.getFlowIntensity(),
     );
     this.moisture = new MoistureModel(this.terrain.grid.cellCount);
+    this.vegetation = new VegetationModel(this.terrain.grid.cellCount, this.terrain.seed);
     this.soilMoisture = this.moisture.getMoisture();
     this.persistentWetness = this.moisture.getPersistentWetness();
     this.floodProne = this.moisture.getFloodProne();
+    this.vegetationBiomass = this.vegetation.getBiomass();
+    this.vegetationDensity = this.vegetation.getDensityClass();
+    this.vegetationProfile = this.vegetation.getProfileId();
+    this.initializeVegetation();
   }
 
   public static createSeed(): number {
@@ -137,11 +153,13 @@ export class Simulation {
     this.hydrologyAccumulator += clampedAdvance;
     this.erosionAccumulator += clampedAdvance;
     this.ecologyAccumulator += clampedAdvance;
+    this.vegetationAccumulator += clampedAdvance;
     this.slowProcessAccumulator += clampedAdvance;
 
     this.runHydrologyCadence();
     this.runErosionCadence();
     this.runEcologyCadence();
+    this.runVegetationCadence();
     this.runSlowProcessCadence();
   }
 
@@ -149,6 +167,7 @@ export class Simulation {
     this.hydrology.reset();
     this.erosion.reset();
     this.moisture.reset();
+    this.vegetation.reset();
     this.waterDepth = this.hydrology.getWaterDepth();
     this.erosion.setWaterDepthBuffer(this.waterDepth);
     this.flowAccumulation.fill(0);
@@ -157,7 +176,9 @@ export class Simulation {
     this.hydrologyAccumulator = 0;
     this.erosionAccumulator = 0;
     this.ecologyAccumulator = 0;
+    this.vegetationAccumulator = 0;
     this.slowProcessAccumulator = 0;
+    this.initializeVegetation();
   }
 
   public regenerate(seed = Simulation.createSeed()): void {
@@ -174,6 +195,7 @@ export class Simulation {
     this.hydrologyAccumulator = 0;
     this.erosionAccumulator = 0;
     this.ecologyAccumulator = 0;
+    this.vegetationAccumulator = 0;
     this.slowProcessAccumulator = 0;
 
     const nextRainfall = new RainfallModel(
@@ -197,11 +219,16 @@ export class Simulation {
       this.hydrology.getFlowIntensity(),
     );
     this.moisture = new MoistureModel(this.terrain.grid.cellCount);
+    this.vegetation = new VegetationModel(this.terrain.grid.cellCount, this.terrain.seed);
     this.waterDepth = this.hydrology.getWaterDepth();
     this.erosion.setWaterDepthBuffer(this.waterDepth);
     this.soilMoisture = this.moisture.getMoisture();
     this.persistentWetness = this.moisture.getPersistentWetness();
     this.floodProne = this.moisture.getFloodProne();
+    this.vegetationBiomass = this.vegetation.getBiomass();
+    this.vegetationDensity = this.vegetation.getDensityClass();
+    this.vegetationProfile = this.vegetation.getProfileId();
+    this.initializeVegetation();
   }
 
   public setRainIntensity(intensity: number): void {
@@ -286,6 +313,26 @@ export class Simulation {
     }
   }
 
+  private runVegetationCadence(): void {
+    let steps = 0;
+
+    while (
+      this.vegetationAccumulator >= this.schedule.vegetationStepSeconds &&
+      steps < this.schedule.maxVegetationSubstepsPerAdvance
+    ) {
+      this.runVegetationStep(this.schedule.vegetationStepSeconds);
+      this.vegetationAccumulator -= this.schedule.vegetationStepSeconds;
+      steps += 1;
+    }
+
+    if (steps >= this.schedule.maxVegetationSubstepsPerAdvance) {
+      this.vegetationAccumulator = Math.min(
+        this.vegetationAccumulator,
+        this.schedule.vegetationStepSeconds,
+      );
+    }
+  }
+
   private runSlowProcessCadence(): void {
     let steps = 0;
 
@@ -340,5 +387,36 @@ export class Simulation {
       this.hydrology.getFlowIntensity(),
       stepSeconds,
     );
+    this.soilMoisture = this.moisture.getMoisture();
+    this.persistentWetness = this.moisture.getPersistentWetness();
+    this.floodProne = this.moisture.getFloodProne();
+  }
+
+  private runVegetationStep(stepSeconds: number): void {
+    this.vegetation.step(
+      this.terrain,
+      this.soilMoisture,
+      this.persistentWetness,
+      this.floodProne,
+      this.waterDepth,
+      stepSeconds,
+    );
+    this.vegetationBiomass = this.vegetation.getBiomass();
+    this.vegetationDensity = this.vegetation.getDensityClass();
+    this.vegetationProfile = this.vegetation.getProfileId();
+  }
+
+  private initializeVegetation(): void {
+    this.vegetation.initialize(
+      this.terrain,
+      this.rainfall.distribution,
+      this.rainfall.getIntensity(),
+      this.soilMoisture,
+      this.persistentWetness,
+      this.floodProne,
+    );
+    this.vegetationBiomass = this.vegetation.getBiomass();
+    this.vegetationDensity = this.vegetation.getDensityClass();
+    this.vegetationProfile = this.vegetation.getProfileId();
   }
 }
