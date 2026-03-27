@@ -37,6 +37,15 @@ export interface VegetationSettings {
 
 export interface VegetationDebugSummary {
   speciesCount: number;
+  activeSpeciesCount: number;
+  livingCellCount: number;
+  denseCellCount: number;
+  occupiedPercent: number;
+  averageBiomass: number;
+  averageLiveAgeSeconds: number;
+  averageCompletedLifespanSeconds: number;
+  oldestLiveAgeSeconds: number;
+  dominantPhenotype: string;
   phenotypeCounts: Record<string, number>;
 }
 
@@ -75,8 +84,12 @@ export class VegetationModel {
   private readonly ecologyProfileId: Uint8Array;
   private readonly dominantSpeciesId: Uint16Array;
   private readonly phenotypeClass: Uint8Array;
+  private readonly ageSeconds: Float32Array;
+  private readonly nextAgeSeconds: Float32Array;
   private readonly neighborSupport: Float32Array;
   private readonly nearbyWetness: Float32Array;
+  private completedLifespanSeconds = 0;
+  private completedLives = 0;
 
   public constructor(cellCount: number, seed: number) {
     this.seed = seed >>> 0;
@@ -91,6 +104,8 @@ export class VegetationModel {
     this.dominantSpeciesId = new Uint16Array(cellCount);
     this.dominantSpeciesId.fill(SPECIES_NONE);
     this.phenotypeClass = new Uint8Array(cellCount);
+    this.ageSeconds = new Float32Array(cellCount);
+    this.nextAgeSeconds = new Float32Array(cellCount);
     this.neighborSupport = new Float32Array(cellCount);
     this.nearbyWetness = new Float32Array(cellCount);
   }
@@ -121,6 +136,12 @@ export class VegetationModel {
 
   public getDebugSummary(): VegetationDebugSummary {
     const phenotypeCounts: Record<string, number> = {};
+    const activeSpecies = new Set<number>();
+    let livingCellCount = 0;
+    let denseCellCount = 0;
+    let biomassSum = 0;
+    let ageSum = 0;
+    let oldestLiveAgeSeconds = 0;
 
     for (let index = 0; index < this.dominantSpeciesId.length; index += 1) {
       const speciesId = this.dominantSpeciesId[index];
@@ -135,10 +156,31 @@ export class VegetationModel {
 
       const label = phenotypeName(species.phenotype);
       phenotypeCounts[label] = (phenotypeCounts[label] ?? 0) + 1;
+      activeSpecies.add(speciesId);
+      livingCellCount += 1;
+      if (this.densityClass[index] >= 3) {
+        denseCellCount += 1;
+      }
+      biomassSum += this.biomass[index];
+      ageSum += this.ageSeconds[index];
+      oldestLiveAgeSeconds = Math.max(oldestLiveAgeSeconds, this.ageSeconds[index]);
     }
+
+    const dominantPhenotypeEntry = Object.entries(phenotypeCounts).sort((left, right) => right[1] - left[1])[0];
 
     return {
       speciesCount: this.speciesCatalog.length,
+      activeSpeciesCount: activeSpecies.size,
+      livingCellCount,
+      denseCellCount,
+      occupiedPercent:
+        this.dominantSpeciesId.length > 0 ? (livingCellCount / this.dominantSpeciesId.length) * 100 : 0,
+      averageBiomass: livingCellCount > 0 ? biomassSum / livingCellCount : 0,
+      averageLiveAgeSeconds: livingCellCount > 0 ? ageSum / livingCellCount : 0,
+      averageCompletedLifespanSeconds:
+        this.completedLives > 0 ? this.completedLifespanSeconds / this.completedLives : 0,
+      oldestLiveAgeSeconds,
+      dominantPhenotype: dominantPhenotypeEntry?.[0] ?? "none",
       phenotypeCounts,
     };
   }
@@ -147,12 +189,16 @@ export class VegetationModel {
     this.speciesCatalog = createInitialSpeciesCatalog(this.seed);
     this.nextSpeciesId = this.speciesCatalog.length;
     this.vegetationStepCounter = 0;
+    this.completedLifespanSeconds = 0;
+    this.completedLives = 0;
     this.biomass.fill(0);
     this.nextBiomass.fill(0);
     this.densityClass.fill(0);
     this.ecologyProfileId.fill(VEGETATION_PROFILE_NONE);
     this.dominantSpeciesId.fill(SPECIES_NONE);
     this.phenotypeClass.fill(0);
+    this.ageSeconds.fill(0);
+    this.nextAgeSeconds.fill(0);
     this.neighborSupport.fill(0);
     this.nearbyWetness.fill(0);
   }
@@ -269,6 +315,7 @@ export class VegetationModel {
         const currentSpeciesId = this.dominantSpeciesId[index];
         const currentSpecies = currentSpeciesId === SPECIES_NONE ? null : this.speciesCatalog[currentSpeciesId];
         const currentBiomass = this.biomass[index];
+        const currentAgeSeconds = this.ageSeconds[index];
         const currentSuitability = currentSpecies
           ? this.evaluateSpeciesSuitability(
               currentSpecies,
@@ -297,30 +344,25 @@ export class VegetationModel {
           targetSuitability = environmentCandidate.score;
         }
 
+        const activeStressSpeciesId =
+          currentSpeciesId !== SPECIES_NONE ? this.dominantSpeciesId[index] : targetSpeciesId;
+        const activeStressSpecies =
+          activeStressSpeciesId === SPECIES_NONE ? null : this.speciesCatalog[activeStressSpeciesId] ?? null;
         const competition = support * this.settings.carryingCapacityStrength;
         const carryingCapacity = clamp(
           targetSuitability * (1 - competition * 0.45) * (0.88 + wetAdjacency * 0.12),
           0,
           1,
         );
-        const droughtStress = clamp(
-          (this.resolveDroughtTolerance(targetSpeciesId) - moisture) /
-            Math.max(this.resolveDroughtTolerance(targetSpeciesId), 0.12),
-          0,
-          1,
-        );
-        const floodStress = clamp(
-          (flood - this.resolveFloodTolerance(targetSpeciesId)) /
-            Math.max(1 - this.resolveFloodTolerance(targetSpeciesId), 0.12),
-          0,
-          1,
-        );
-        const slopeStress = clamp(
-          (slope - this.resolveSlopeTolerance(targetSpeciesId)) /
-            Math.max(1 - this.resolveSlopeTolerance(targetSpeciesId), 0.12),
-          0,
-          1,
-        );
+        const droughtStress = activeStressSpecies
+          ? this.computeDroughtStress(activeStressSpecies, moisture)
+          : 0;
+        const floodStress = activeStressSpecies
+          ? this.computeFloodStress(activeStressSpecies, flood, standingWater)
+          : 0;
+        const slopeStress = activeStressSpecies
+          ? this.computeSlopeStress(activeStressSpecies, slope)
+          : 0;
 
         let nextBiomass = currentBiomass;
 
@@ -340,14 +382,14 @@ export class VegetationModel {
             growthPotential *
             this.settings.growthRate *
             (0.32 + support * 0.68) *
-            this.resolveVigor(this.dominantSpeciesId[index]) *
+            this.resolveVigor(activeStressSpeciesId) *
             dtSeconds;
           nextBiomass -=
             (declinePressure * this.settings.declineRate +
               droughtStress * this.settings.droughtStressStrength +
               floodStress * this.settings.floodStressStrength +
               slopeStress * this.settings.slopeStressStrength +
-              standingWaterStress * 0.24) *
+              standingWaterStress * 0.16) *
             dtSeconds;
         } else {
           const colonizer = neighborCandidate.speciesId !== SPECIES_NONE ? neighborCandidate : environmentCandidate;
@@ -381,14 +423,23 @@ export class VegetationModel {
 
         if (nextBiomass < 0.01) {
           nextBiomass = 0;
+          this.recordCompletedLife(currentSpeciesId, currentAgeSeconds);
           this.clearCellSpecies(index);
         }
 
         this.nextBiomass[index] = nextBiomass;
+        this.nextAgeSeconds[index] = this.resolveNextAge(
+          currentSpeciesId,
+          this.dominantSpeciesId[index],
+          currentAgeSeconds,
+          nextBiomass,
+          dtSeconds,
+        );
       }
     }
 
     this.biomass.set(this.nextBiomass);
+    this.ageSeconds.set(this.nextAgeSeconds);
     this.refreshDerivedState();
   }
 
@@ -639,6 +690,38 @@ export class VegetationModel {
     this.phenotypeClass[index] = species.phenotype;
   }
 
+  private resolveNextAge(
+    previousSpeciesId: number,
+    nextSpeciesId: number,
+    currentAgeSeconds: number,
+    nextBiomass: number,
+    dtSeconds: number,
+  ): number {
+    if (nextBiomass < 0.01 || nextSpeciesId === SPECIES_NONE) {
+      return 0;
+    }
+
+    if (previousSpeciesId !== SPECIES_NONE && previousSpeciesId !== nextSpeciesId) {
+      this.recordCompletedLife(previousSpeciesId, currentAgeSeconds);
+      return dtSeconds;
+    }
+
+    if (previousSpeciesId === SPECIES_NONE) {
+      return dtSeconds;
+    }
+
+    return currentAgeSeconds + dtSeconds;
+  }
+
+  private recordCompletedLife(speciesId: number, ageSeconds: number): void {
+    if (speciesId === SPECIES_NONE || ageSeconds <= 0.05) {
+      return;
+    }
+
+    this.completedLifespanSeconds += ageSeconds;
+    this.completedLives += 1;
+  }
+
   private clearCellSpecies(index: number): void {
     this.dominantSpeciesId[index] = SPECIES_NONE;
     this.ecologyProfileId[index] = VEGETATION_PROFILE_NONE;
@@ -657,6 +740,51 @@ export class VegetationModel {
     return speciesId === SPECIES_NONE
       ? this.settings.standingWaterTolerance
       : this.speciesCatalog[speciesId]?.ecology.standingWaterTolerance ?? this.settings.standingWaterTolerance;
+  }
+
+  /**
+   * Drought tolerance should reduce drought stress, not act like a minimum
+   * moisture requirement. The previous formula inverted that relationship and
+   * made drought-tolerant plants die fastest when the moisture field started
+   * low, causing synchronized die-offs across the map.
+   */
+  private computeDroughtStress(species: PlantSpeciesDefinition, moisture: number): number {
+    const drynessDeficit = clamp(
+      (species.ecology.moisturePreference - moisture) /
+        Math.max(species.ecology.moisturePreference + species.ecology.moistureTolerance, 0.16),
+      0,
+      1,
+    );
+    const droughtBuffer = 1 - species.ecology.droughtTolerance * 0.82;
+    return drynessDeficit * droughtBuffer;
+  }
+
+  private computeFloodStress(
+    species: PlantSpeciesDefinition,
+    floodProne: number,
+    standingWater: number,
+  ): number {
+    const floodComponent = clamp(
+      (floodProne - species.ecology.floodTolerance) /
+        Math.max(1 - species.ecology.floodTolerance, 0.16),
+      0,
+      1,
+    );
+    const standingWaterComponent = clamp(
+      (standingWater - species.ecology.standingWaterTolerance) /
+        Math.max(1 - species.ecology.standingWaterTolerance, 0.16),
+      0,
+      1,
+    );
+    return clamp(floodComponent * 0.7 + standingWaterComponent * 0.3, 0, 1);
+  }
+
+  private computeSlopeStress(species: PlantSpeciesDefinition, slope: number): number {
+    return clamp(
+      (slope - species.ecology.slopeTolerance) / Math.max(1 - species.ecology.slopeTolerance, 0.16),
+      0,
+      1,
+    );
   }
 
   private resolveSlopeTolerance(speciesId: number): number {

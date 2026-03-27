@@ -50,6 +50,15 @@ export function createControls(
   const waterValue = queryElement<HTMLElement>("waterValue");
   const peakFlowValue = queryElement<HTMLElement>("peakFlowValue");
   const plantSpeciesValue = queryElement<HTMLElement>("plantSpeciesValue");
+  const activePlantSpeciesValue = queryElement<HTMLElement>("activePlantSpeciesValue");
+  const livingPlantCellsValue = queryElement<HTMLElement>("livingPlantCellsValue");
+  const plantCoverageValue = queryElement<HTMLElement>("plantCoverageValue");
+  const densePlantCellsValue = queryElement<HTMLElement>("densePlantCellsValue");
+  const averagePlantBiomassValue = queryElement<HTMLElement>("averagePlantBiomassValue");
+  const dominantPhenotypeValue = queryElement<HTMLElement>("dominantPhenotypeValue");
+  const averagePlantAgeValue = queryElement<HTMLElement>("averagePlantAgeValue");
+  const averagePlantLifespanValue = queryElement<HTMLElement>("averagePlantLifespanValue");
+  const oldestPlantValue = queryElement<HTMLElement>("oldestPlantValue");
   const plantPhenotypeValue = queryElement<HTMLElement>("plantPhenotypeValue");
 
   let isRunning = initialState.isRunning;
@@ -128,6 +137,18 @@ export function createControls(
     setVegetationDebug: (summary: VegetationDebugSummary) => {
       const entries = Object.entries(summary.phenotypeCounts).sort((left, right) => right[1] - left[1]);
       plantSpeciesValue.textContent = summary.speciesCount.toString();
+      activePlantSpeciesValue.textContent = summary.activeSpeciesCount.toString();
+      livingPlantCellsValue.textContent = summary.livingCellCount.toString();
+      plantCoverageValue.textContent = `${summary.occupiedPercent.toFixed(1)}%`;
+      densePlantCellsValue.textContent = summary.denseCellCount.toString();
+      averagePlantBiomassValue.textContent = summary.averageBiomass.toFixed(2);
+      dominantPhenotypeValue.textContent = summary.dominantPhenotype;
+      averagePlantAgeValue.textContent = `${summary.averageLiveAgeSeconds.toFixed(1)} s`;
+      averagePlantLifespanValue.textContent =
+        summary.averageCompletedLifespanSeconds > 0
+          ? `${summary.averageCompletedLifespanSeconds.toFixed(1)} s`
+          : "n/a";
+      oldestPlantValue.textContent = `${summary.oldestLiveAgeSeconds.toFixed(1)} s`;
       plantPhenotypeValue.textContent =
         entries.length > 0
           ? entries.map(([label, count]) => `${label} ${count}`).join(", ")
