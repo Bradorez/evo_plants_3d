@@ -159,8 +159,8 @@ export function createControls(
           : "no established plant forms";
       plantPressureValue.textContent =
         pressureEntries.length > 0
-          ? pressureEntries.map(([label, count]) => `${label} ${count}`).join(", ")
-          : "pressure mix unavailable";
+          ? `${pressureEntries.map(([label, count]) => `${label} ${count}`).join(", ")} | maint ${summary.averageMaintenanceCost.toFixed(2)}, comp ${summary.averageCompetitionStrength.toFixed(2)}, drought ${summary.averageDroughtBurden.toFixed(2)}, flood ${summary.averageFloodSuitability.toFixed(2)}, terrain ${summary.averageTerrainStability.toFixed(2)}, spread ${summary.averageSpreadDrive.toFixed(2)}`
+          : `maint ${summary.averageMaintenanceCost.toFixed(2)}, comp ${summary.averageCompetitionStrength.toFixed(2)}, drought ${summary.averageDroughtBurden.toFixed(2)}, flood ${summary.averageFloodSuitability.toFixed(2)}, terrain ${summary.averageTerrainStability.toFixed(2)}, spread ${summary.averageSpreadDrive.toFixed(2)}`;
     },
     getViewOptions: () => ({
       showRivers: riverViewInput.checked,

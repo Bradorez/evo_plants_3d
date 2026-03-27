@@ -5,15 +5,16 @@ import {
   buildHabitatPressureProfile,
   classifyPhenotype,
   createInitialSpeciesCatalog,
+  deriveMorphologyEcologyEffects,
   dominantHabitatPressure,
   ECOLOGY_PROFILE_DRYLAND,
   ECOLOGY_PROFILE_MESIC,
   ECOLOGY_PROFILE_WETLAND,
   evaluateMorphologyHabitatFit,
   type HabitatPressureProfile,
+  type PlantMorphologyEcologyEffects,
   mutateSpecies,
   phenotypeName,
-  PlantPhenotypeClass,
   type PlantSpeciesDefinition,
   SPECIES_NONE,
 } from "./PlantSpecies";
@@ -37,6 +38,13 @@ export interface VegetationSettings {
   mutationRate: number;
   mutationSupportThreshold: number;
   maxSpeciesCount: number;
+  morphologyMaintenanceStrength: number;
+  morphologyCompetitionStrength: number;
+  morphologyDroughtStrength: number;
+  morphologyFloodStrength: number;
+  morphologyTerrainStrength: number;
+  morphologySpreadStrength: number;
+  morphologyEstablishmentStrength: number;
 }
 
 export interface VegetationDebugSummary {
@@ -53,6 +61,12 @@ export interface VegetationDebugSummary {
   dominantPressure: string;
   phenotypeCounts: Record<string, number>;
   pressureCounts: Record<string, number>;
+  averageMaintenanceCost: number;
+  averageCompetitionStrength: number;
+  averageDroughtBurden: number;
+  averageFloodSuitability: number;
+  averageTerrainStability: number;
+  averageSpreadDrive: number;
 }
 
 /**
@@ -77,6 +91,13 @@ export class VegetationModel {
     mutationRate: 0.022,
     mutationSupportThreshold: 0.48,
     maxSpeciesCount: 48,
+    morphologyMaintenanceStrength: 0.16,
+    morphologyCompetitionStrength: 0.18,
+    morphologyDroughtStrength: 0.2,
+    morphologyFloodStrength: 0.18,
+    morphologyTerrainStrength: 0.17,
+    morphologySpreadStrength: 0.18,
+    morphologyEstablishmentStrength: 0.16,
   };
 
   private readonly seed: number;
@@ -149,6 +170,12 @@ export class VegetationModel {
     let biomassSum = 0;
     let ageSum = 0;
     let oldestLiveAgeSeconds = 0;
+    let maintenanceSum = 0;
+    let competitionSum = 0;
+    let droughtSum = 0;
+    let floodSum = 0;
+    let terrainSum = 0;
+    let spreadSum = 0;
 
     for (let index = 0; index < this.dominantSpeciesId.length; index += 1) {
       const speciesId = this.dominantSpeciesId[index];
@@ -173,6 +200,7 @@ export class VegetationModel {
         1 - species.ecology.moisturePreference,
       );
       const pressureLabel = dominantHabitatPressure(habitat);
+      const functionEffects = deriveMorphologyEcologyEffects(species);
       pressureCounts[pressureLabel] = (pressureCounts[pressureLabel] ?? 0) + 1;
       activeSpecies.add(speciesId);
       livingCellCount += 1;
@@ -182,6 +210,12 @@ export class VegetationModel {
       biomassSum += this.biomass[index];
       ageSum += this.ageSeconds[index];
       oldestLiveAgeSeconds = Math.max(oldestLiveAgeSeconds, this.ageSeconds[index]);
+      maintenanceSum += functionEffects.maintenanceCost;
+      competitionSum += functionEffects.competitionStrength;
+      droughtSum += functionEffects.droughtBurden;
+      floodSum += functionEffects.floodSuitability;
+      terrainSum += functionEffects.terrainStability;
+      spreadSum += functionEffects.spreadDrive;
     }
 
     const dominantPhenotypeEntry = Object.entries(phenotypeCounts).sort((left, right) => right[1] - left[1])[0];
@@ -203,6 +237,12 @@ export class VegetationModel {
       dominantPressure: dominantPressureEntry?.[0] ?? "mixed",
       phenotypeCounts,
       pressureCounts,
+      averageMaintenanceCost: livingCellCount > 0 ? maintenanceSum / livingCellCount : 0,
+      averageCompetitionStrength: livingCellCount > 0 ? competitionSum / livingCellCount : 0,
+      averageDroughtBurden: livingCellCount > 0 ? droughtSum / livingCellCount : 0,
+      averageFloodSuitability: livingCellCount > 0 ? floodSum / livingCellCount : 0,
+      averageTerrainStability: livingCellCount > 0 ? terrainSum / livingCellCount : 0,
+      averageSpreadDrive: livingCellCount > 0 ? spreadSum / livingCellCount : 0,
     };
   }
 
@@ -289,7 +329,7 @@ export class VegetationModel {
           selection.speciesId === SPECIES_NONE ||
           selection.score < 0.22 ||
           establishment < 0.31 ||
-          occupancyNoise < 0.5
+          occupancyNoise < 0.75
         ) {
           continue;
         }
@@ -404,26 +444,41 @@ export class VegetationModel {
           currentSpeciesId !== SPECIES_NONE ? this.dominantSpeciesId[index] : targetSpeciesId;
         const activeStressSpecies =
           activeStressSpeciesId === SPECIES_NONE ? null : this.speciesCatalog[activeStressSpeciesId] ?? null;
-        const competition = support * this.settings.carryingCapacityStrength;
+        const morphologyEffects = activeStressSpecies
+          ? deriveMorphologyEcologyEffects(activeStressSpecies)
+          : this.getNeutralMorphologyEffects();
+        const competitionAdvantage =
+          habitat.fertileMoisture *
+          habitat.stability *
+          morphologyEffects.competitionStrength *
+          this.settings.morphologyCompetitionStrength;
+        const competition =
+          support *
+          this.settings.carryingCapacityStrength *
+          (1.02 - competitionAdvantage * 0.34);
         const morphologyPerformance = activeStressSpecies
           ? evaluateMorphologyHabitatFit(activeStressSpecies, habitat)
           : 0.5;
         const carryingCapacity = clamp(
           targetSuitability *
-            (0.82 + morphologyPerformance * 0.18) *
+            (0.78 + morphologyPerformance * 0.14 + competitionAdvantage * 0.12) *
             (1 - competition * 0.45) *
-            (0.88 + wetAdjacency * 0.12),
+            (
+              0.86 +
+              wetAdjacency * 0.08 +
+              morphologyEffects.floodSuitability * habitat.channelInfluence * 0.06
+            ),
           0,
           1,
         );
         const droughtStress = activeStressSpecies
-          ? this.computeDroughtStress(activeStressSpecies, moisture)
+          ? this.computeDroughtStress(activeStressSpecies, moisture, morphologyEffects, habitat)
           : 0;
         const floodStress = activeStressSpecies
-          ? this.computeFloodStress(activeStressSpecies, flood, standingWater)
+          ? this.computeFloodStress(activeStressSpecies, flood, standingWater, morphologyEffects)
           : 0;
         const slopeStress = activeStressSpecies
-          ? this.computeSlopeStress(activeStressSpecies, slope)
+          ? this.computeSlopeStress(activeStressSpecies, slope, morphologyEffects)
           : 0;
 
         let nextBiomass = currentBiomass;
@@ -439,16 +494,22 @@ export class VegetationModel {
             0,
             standingWater - this.resolveStandingWaterTolerance(this.dominantSpeciesId[index]),
           );
+          const maintenancePressure =
+            morphologyEffects.maintenanceCost *
+            this.settings.morphologyMaintenanceStrength *
+            (0.42 + habitat.dryness * 0.34 + habitat.slope * 0.16 + standingWater * 0.08);
 
           nextBiomass +=
             growthPotential *
             this.settings.growthRate *
             (0.32 + support * 0.68) *
-            (0.78 + morphologyPerformance * 0.22) *
+            (0.74 + morphologyPerformance * 0.16 + competitionAdvantage * 0.1) *
+            (1 - maintenancePressure * 0.42) *
             this.resolveVigor(activeStressSpeciesId) *
             dtSeconds;
           nextBiomass -=
             (declinePressure * this.settings.declineRate +
+              maintenancePressure +
               droughtStress * this.settings.droughtStressStrength +
               floodStress * this.settings.floodStressStrength +
               slopeStress * this.settings.slopeStressStrength +
@@ -468,11 +529,20 @@ export class VegetationModel {
             );
             const spreadAbility = this.resolveSpreadAbility(colonizerSpeciesId);
             const vigor = this.resolveVigor(colonizerSpeciesId);
+            const colonizerSpecies = this.speciesCatalog[colonizerSpeciesId];
+            const colonizerEffects = colonizerSpecies
+              ? deriveMorphologyEcologyEffects(colonizerSpecies)
+              : this.getNeutralMorphologyEffects();
+            const spreadDrive =
+              0.56 +
+              colonizerEffects.spreadDrive * this.settings.morphologySpreadStrength * 1.6 -
+              colonizerEffects.establishmentCost * this.settings.morphologyEstablishmentStrength * 0.8;
             const colonization =
               colonizer.score *
               support *
               this.settings.spreadRate *
               spreadAbility *
+              spreadDrive *
               (0.58 + vigor * 0.42) *
               dtSeconds;
 
@@ -656,17 +726,41 @@ export class VegetationModel {
           ? (1 - normalizedElevation) * 0.14
           : 0.08;
     const morphologyFit = evaluateMorphologyHabitatFit(species, habitat);
+    const morphologyEffects = deriveMorphologyEcologyEffects(species);
+    const competitiveBenefit =
+      habitat.fertileMoisture *
+      habitat.stability *
+      morphologyEffects.competitionStrength *
+      this.settings.morphologyCompetitionStrength;
+    const droughtAmplification =
+      1 + morphologyEffects.droughtBurden * this.settings.morphologyDroughtStrength;
+    const floodAmplification =
+      1 + (1 - morphologyEffects.floodSuitability) * this.settings.morphologyFloodStrength;
+    const slopeAmplification =
+      1 + (1 - morphologyEffects.terrainStability) * this.settings.morphologyTerrainStrength;
+    const maintenancePenalty =
+      morphologyEffects.maintenanceCost *
+      this.settings.morphologyMaintenanceStrength *
+      (0.34 + habitat.dryness * 0.26 + habitat.slope * 0.16);
+    const spreadBonus =
+      morphologyEffects.spreadDrive *
+      this.settings.morphologySpreadStrength *
+      (0.08 + habitat.stability * 0.04);
 
     return clamp(
       moistureFit * 0.36 +
         wetnessFit * 0.24 +
         ecology.vigor * 0.16 +
         (1 - slopePenalty) * 0.12 +
-        morphologyFit * 0.2 +
+        morphologyFit * 0.18 +
+        competitiveBenefit * 0.12 +
+        spreadBonus +
         elevationBias -
-        droughtPenalty * 0.2 -
-        floodPenalty * 0.26 -
-        standingWaterPenalty * 0.22,
+        maintenancePenalty -
+        droughtPenalty * 0.18 * droughtAmplification -
+        floodPenalty * 0.24 * floodAmplification -
+        standingWaterPenalty * 0.2 * floodAmplification -
+        slopePenalty * 0.1 * slopeAmplification,
       0,
       1,
     );
@@ -698,7 +792,12 @@ export class VegetationModel {
           continue;
         }
 
-        const weight = (offsetX === 0 || offsetY === 0 ? 1 : 0.76) * this.biomass[sampleIndex];
+        const species = this.speciesCatalog[speciesId];
+        const effects = species ? deriveMorphologyEcologyEffects(species) : this.getNeutralMorphologyEffects();
+        const weight =
+          (offsetX === 0 || offsetY === 0 ? 1 : 0.76) *
+          this.biomass[sampleIndex] *
+          (0.84 + effects.competitionStrength * this.settings.morphologyCompetitionStrength);
         if (weight > bestScore) {
           bestScore = weight;
           bestSpeciesId = speciesId;
@@ -803,14 +902,6 @@ export class VegetationModel {
     this.phenotypeClass[index] = 0;
   }
 
-  private resolveDroughtTolerance(speciesId: number): number {
-    return speciesId === SPECIES_NONE ? 0.22 : this.speciesCatalog[speciesId]?.ecology.droughtTolerance ?? 0.22;
-  }
-
-  private resolveFloodTolerance(speciesId: number): number {
-    return speciesId === SPECIES_NONE ? 0.28 : this.speciesCatalog[speciesId]?.ecology.floodTolerance ?? 0.28;
-  }
-
   private resolveStandingWaterTolerance(speciesId: number): number {
     return speciesId === SPECIES_NONE
       ? this.settings.standingWaterTolerance
@@ -823,7 +914,12 @@ export class VegetationModel {
    * made drought-tolerant plants die fastest when the moisture field started
    * low, causing synchronized die-offs across the map.
    */
-  private computeDroughtStress(species: PlantSpeciesDefinition, moisture: number): number {
+  private computeDroughtStress(
+    species: PlantSpeciesDefinition,
+    moisture: number,
+    morphologyEffects: PlantMorphologyEcologyEffects,
+    habitat: HabitatPressureProfile,
+  ): number {
     const drynessDeficit = clamp(
       (species.ecology.moisturePreference - moisture) /
         Math.max(species.ecology.moisturePreference + species.ecology.moistureTolerance, 0.16),
@@ -831,13 +927,18 @@ export class VegetationModel {
       1,
     );
     const droughtBuffer = 1 - species.ecology.droughtTolerance * 0.82;
-    return drynessDeficit * droughtBuffer;
+    const morphologyAmplification =
+      1 +
+      morphologyEffects.droughtBurden * this.settings.morphologyDroughtStrength * (0.72 + habitat.dryness * 0.48) -
+      morphologyEffects.spreadDrive * 0.06;
+    return drynessDeficit * droughtBuffer * morphologyAmplification;
   }
 
   private computeFloodStress(
     species: PlantSpeciesDefinition,
     floodProne: number,
     standingWater: number,
+    morphologyEffects: PlantMorphologyEcologyEffects,
   ): number {
     const floodComponent = clamp(
       (floodProne - species.ecology.floodTolerance) /
@@ -851,19 +952,36 @@ export class VegetationModel {
       0,
       1,
     );
-    return clamp(floodComponent * 0.7 + standingWaterComponent * 0.3, 0, 1);
+    const morphologyBuffer =
+      1 - morphologyEffects.floodSuitability * this.settings.morphologyFloodStrength * 0.7;
+    return clamp((floodComponent * 0.7 + standingWaterComponent * 0.3) * morphologyBuffer, 0, 1);
   }
 
-  private computeSlopeStress(species: PlantSpeciesDefinition, slope: number): number {
-    return clamp(
+  private computeSlopeStress(
+    species: PlantSpeciesDefinition,
+    slope: number,
+    morphologyEffects: PlantMorphologyEcologyEffects,
+  ): number {
+    const baseStress = clamp(
       (slope - species.ecology.slopeTolerance) / Math.max(1 - species.ecology.slopeTolerance, 0.16),
       0,
       1,
     );
+    const morphologyAmplification =
+      1 + (1 - morphologyEffects.terrainStability) * this.settings.morphologyTerrainStrength;
+    return clamp(baseStress * morphologyAmplification, 0, 1);
   }
 
-  private resolveSlopeTolerance(speciesId: number): number {
-    return speciesId === SPECIES_NONE ? 0.5 : this.speciesCatalog[speciesId]?.ecology.slopeTolerance ?? 0.5;
+  private getNeutralMorphologyEffects(): PlantMorphologyEcologyEffects {
+    return {
+      maintenanceCost: 0.5,
+      droughtBurden: 0.5,
+      competitionStrength: 0.5,
+      floodSuitability: 0.5,
+      terrainStability: 0.5,
+      spreadDrive: 0.5,
+      establishmentCost: 0.5,
+    };
   }
 
   private resolveSpreadAbility(speciesId: number): number {

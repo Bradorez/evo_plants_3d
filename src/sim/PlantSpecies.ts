@@ -134,6 +134,16 @@ export interface PlantMorphologyDebugSummary {
   leafExpression: string;
 }
 
+export interface PlantMorphologyEcologyEffects {
+  maintenanceCost: number;
+  droughtBurden: number;
+  competitionStrength: number;
+  floodSuitability: number;
+  terrainStability: number;
+  spreadDrive: number;
+  establishmentCost: number;
+}
+
 export const MORPHOLOGY_BOUNDS = {
   maxHeight: [0.2, 15] as const,
   woodiness: [0, 1] as const,
@@ -161,6 +171,43 @@ export const MORPHOLOGY_BOUNDS = {
   uprightness: [0, 1] as const,
   clumping: [0, 1] as const,
 };
+
+export const MORPHOLOGY_ECOLOGY_SETTINGS = {
+  maintenanceSizeWeight: 0.34,
+  maintenanceStructureWeight: 0.28,
+  maintenanceFoliageWeight: 0.2,
+  maintenanceBranchingWeight: 0.18,
+  droughtStructureWeight: 0.34,
+  droughtFoliageWeight: 0.42,
+  droughtMitigationWeight: 0.24,
+  competitionHeightWeight: 0.3,
+  competitionCanopyWeight: 0.28,
+  competitionTopBiasWeight: 0.12,
+  competitionWoodinessWeight: 0.1,
+  competitionBranchingWeight: 0.2,
+  floodUprightWeight: 0.22,
+  floodTopBiasWeight: 0.16,
+  floodClumpingWeight: 0.14,
+  floodLightnessWeight: 0.14,
+  floodLeafSlenderWeight: 0.18,
+  floodSpreadPenalty: 0.16,
+  terrainBaseSupportWeight: 0.28,
+  terrainSpreadWeight: 0.24,
+  terrainGroundCoverWeight: 0.2,
+  terrainClumpingWeight: 0.08,
+  terrainHeightPenalty: 0.12,
+  terrainCanopyPenalty: 0.08,
+  spreadCoverWeight: 0.3,
+  spreadBasalWeight: 0.22,
+  spreadLateralWeight: 0.16,
+  spreadStemWeight: 0.12,
+  spreadCheapnessWeight: 0.2,
+  establishmentSizeWeight: 0.28,
+  establishmentWoodWeight: 0.24,
+  establishmentCanopyWeight: 0.18,
+  establishmentSpreadReliefWeight: 0.16,
+  establishmentGroundReliefWeight: 0.14,
+} as const;
 
 /**
  * Plant species definitions sit between ecology and rendering. They keep the
@@ -562,6 +609,121 @@ export function getSpeciesDisplayColor(species: PlantSpeciesDefinition): {
   const flower = hsvToRgb(flowerHue % 1, 0.45, 0.92);
 
   return { foliage, wood, flower };
+}
+
+/**
+ * MorphologyEcologyEffects are the shared bridge between visible structure and
+ * ecological function. Vegetation dynamics use these values directly, so
+ * evolution is selecting on rendered form rather than on hidden visual-only
+ * traits.
+ */
+export function deriveMorphologyEcologyEffects(
+  species: PlantSpeciesDefinition,
+): PlantMorphologyEcologyEffects {
+  const morphology = species.morphology;
+  const heightNorm = morphology.maxHeight / MORPHOLOGY_BOUNDS.maxHeight[1];
+  const trunkNorm = normalizeTrait(morphology.trunkThickness, MORPHOLOGY_BOUNDS.trunkThickness);
+  const crownNorm = morphology.crownRadius / MORPHOLOGY_BOUNDS.crownRadius[1];
+  const stemNorm = normalizeTrait(morphology.stemCount, MORPHOLOGY_BOUNDS.stemCount);
+  const slenderLeafBias = clamp((morphology.leafAspectRatio - 1) / 4, 0, 1);
+  const canopyMass = clamp(
+    crownNorm * 0.36 + morphology.crownDensity * 0.32 + morphology.foliageDensity * 0.32,
+    0,
+    1,
+  );
+  const structuralMass = clamp(
+    heightNorm * 0.4 + morphology.woodiness * 0.34 + trunkNorm * 0.26,
+    0,
+    1,
+  );
+  const branchingComplexity = clamp(
+    morphology.branchingRate * 0.42 + morphology.branchDensity * 0.34 + stemNorm * 0.24,
+    0,
+    1,
+  );
+  const groundReach = clamp(
+    morphology.groundCoverFactor * 0.42 + morphology.basalSpread * 0.32 + morphology.lateralSpread * 0.26,
+    0,
+    1,
+  );
+
+  const maintenanceCost = clamp(
+    structuralMass * MORPHOLOGY_ECOLOGY_SETTINGS.maintenanceSizeWeight +
+      canopyMass * MORPHOLOGY_ECOLOGY_SETTINGS.maintenanceFoliageWeight +
+      branchingComplexity * MORPHOLOGY_ECOLOGY_SETTINGS.maintenanceBranchingWeight +
+      morphology.woodiness * MORPHOLOGY_ECOLOGY_SETTINGS.maintenanceStructureWeight,
+    0,
+    1,
+  );
+  const droughtBurden = clamp(
+    structuralMass * MORPHOLOGY_ECOLOGY_SETTINGS.droughtStructureWeight +
+      canopyMass * MORPHOLOGY_ECOLOGY_SETTINGS.droughtFoliageWeight -
+      (
+        groundReach * 0.12 +
+        (1 - morphology.topFoliageBias) * 0.07 +
+        (1 - maintenanceCost) * 0.05
+      ) *
+        MORPHOLOGY_ECOLOGY_SETTINGS.droughtMitigationWeight,
+    0,
+    1,
+  );
+  const competitionStrength = clamp(
+    heightNorm * MORPHOLOGY_ECOLOGY_SETTINGS.competitionHeightWeight +
+      canopyMass * MORPHOLOGY_ECOLOGY_SETTINGS.competitionCanopyWeight +
+      morphology.topFoliageBias * MORPHOLOGY_ECOLOGY_SETTINGS.competitionTopBiasWeight +
+      morphology.woodiness * MORPHOLOGY_ECOLOGY_SETTINGS.competitionWoodinessWeight +
+      branchingComplexity * MORPHOLOGY_ECOLOGY_SETTINGS.competitionBranchingWeight,
+    0,
+    1,
+  );
+  const floodSuitability = clamp(
+    morphology.uprightness * MORPHOLOGY_ECOLOGY_SETTINGS.floodUprightWeight +
+      morphology.topFoliageBias * MORPHOLOGY_ECOLOGY_SETTINGS.floodTopBiasWeight +
+      morphology.clumping * MORPHOLOGY_ECOLOGY_SETTINGS.floodClumpingWeight +
+      (1 - morphology.woodiness) * MORPHOLOGY_ECOLOGY_SETTINGS.floodLightnessWeight +
+      slenderLeafBias * MORPHOLOGY_ECOLOGY_SETTINGS.floodLeafSlenderWeight -
+      crownNorm * MORPHOLOGY_ECOLOGY_SETTINGS.floodSpreadPenalty,
+    0,
+    1,
+  );
+  const terrainStability = clamp(
+    morphology.woodiness * MORPHOLOGY_ECOLOGY_SETTINGS.terrainBaseSupportWeight +
+      morphology.basalSpread * MORPHOLOGY_ECOLOGY_SETTINGS.terrainSpreadWeight +
+      morphology.groundCoverFactor * MORPHOLOGY_ECOLOGY_SETTINGS.terrainGroundCoverWeight +
+      morphology.clumping * MORPHOLOGY_ECOLOGY_SETTINGS.terrainClumpingWeight -
+      heightNorm * MORPHOLOGY_ECOLOGY_SETTINGS.terrainHeightPenalty -
+      crownNorm * MORPHOLOGY_ECOLOGY_SETTINGS.terrainCanopyPenalty,
+    0,
+    1,
+  );
+  const spreadDrive = clamp(
+    morphology.groundCoverFactor * MORPHOLOGY_ECOLOGY_SETTINGS.spreadCoverWeight +
+      morphology.basalSpread * MORPHOLOGY_ECOLOGY_SETTINGS.spreadBasalWeight +
+      morphology.lateralSpread * MORPHOLOGY_ECOLOGY_SETTINGS.spreadLateralWeight +
+      stemNorm * MORPHOLOGY_ECOLOGY_SETTINGS.spreadStemWeight +
+      (1 - maintenanceCost) * MORPHOLOGY_ECOLOGY_SETTINGS.spreadCheapnessWeight,
+    0,
+    1,
+  );
+  const establishmentCost = clamp(
+    structuralMass * MORPHOLOGY_ECOLOGY_SETTINGS.establishmentSizeWeight +
+      morphology.woodiness * MORPHOLOGY_ECOLOGY_SETTINGS.establishmentWoodWeight +
+      canopyMass * MORPHOLOGY_ECOLOGY_SETTINGS.establishmentCanopyWeight -
+      spreadDrive * MORPHOLOGY_ECOLOGY_SETTINGS.establishmentSpreadReliefWeight -
+      groundReach * MORPHOLOGY_ECOLOGY_SETTINGS.establishmentGroundReliefWeight,
+    0,
+    1,
+  );
+
+  return {
+    maintenanceCost,
+    droughtBurden,
+    competitionStrength,
+    floodSuitability,
+    terrainStability,
+    spreadDrive,
+    establishmentCost,
+  };
 }
 
 /**
@@ -1239,6 +1401,10 @@ function classifyEcologyProfile(ecology: PlantEcologyTraits): number {
 
 function clampRange(value: number, range: readonly [number, number]): number {
   return clamp(value, range[0], range[1]);
+}
+
+function normalizeTrait(value: number, range: readonly [number, number]): number {
+  return clamp((value - range[0]) / Math.max(range[1] - range[0], 1e-6), 0, 1);
 }
 
 function signedJitter(random: () => number, amplitude: number): number {

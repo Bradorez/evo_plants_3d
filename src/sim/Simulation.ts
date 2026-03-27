@@ -26,6 +26,7 @@ export interface SimulationOptions {
   cellSize?: number;
   initialSeed?: number;
   initialRainIntensity?: number;
+  vegetationInitializationDelaySeconds?: number;
   schedule?: Partial<SimulationSchedule>;
 }
 
@@ -92,10 +93,13 @@ export class Simulation {
   private slowProcessAccumulator = 0;
   private readonly resolution: number;
   private readonly cellSize: number;
+  private readonly vegetationInitializationDelaySeconds: number;
+  private vegetationInitialized = false;
 
   public constructor(options: SimulationOptions = {}) {
     this.resolution = options.resolution ?? 128;
     this.cellSize = options.cellSize ?? 1;
+    this.vegetationInitializationDelaySeconds = options.vegetationInitializationDelaySeconds ?? 10;
     this.schedule = {
       ...DEFAULT_SCHEDULE,
       ...options.schedule,
@@ -139,7 +143,6 @@ export class Simulation {
     this.vegetationProfile = this.vegetation.getProfileId();
     this.vegetationSpeciesId = this.vegetation.getDominantSpeciesId();
     this.vegetationPhenotype = this.vegetation.getPhenotypeClass();
-    this.initializeVegetation();
   }
 
   public static createSeed(): number {
@@ -184,7 +187,8 @@ export class Simulation {
     this.ecologyAccumulator = 0;
     this.vegetationAccumulator = 0;
     this.slowProcessAccumulator = 0;
-    this.initializeVegetation();
+    this.vegetationInitialized = false;
+    this.syncVegetationState();
   }
 
   public regenerate(seed = Simulation.createSeed()): void {
@@ -236,7 +240,8 @@ export class Simulation {
     this.vegetationProfile = this.vegetation.getProfileId();
     this.vegetationSpeciesId = this.vegetation.getDominantSpeciesId();
     this.vegetationPhenotype = this.vegetation.getPhenotypeClass();
-    this.initializeVegetation();
+    this.vegetationInitialized = false;
+    this.syncVegetationState();
   }
 
   public setRainIntensity(intensity: number): void {
@@ -406,9 +411,20 @@ export class Simulation {
     this.soilMoisture = this.moisture.getMoisture();
     this.persistentWetness = this.moisture.getPersistentWetness();
     this.floodProne = this.moisture.getFloodProne();
+
+    if (
+      !this.vegetationInitialized &&
+      this.elapsedTimeSeconds >= this.vegetationInitializationDelaySeconds
+    ) {
+      this.initializeVegetation();
+    }
   }
 
   private runVegetationStep(stepSeconds: number): void {
+    if (!this.vegetationInitialized) {
+      return;
+    }
+
     this.vegetation.step(
       this.terrain,
       this.soilMoisture,
@@ -426,6 +442,7 @@ export class Simulation {
   }
 
   private initializeVegetation(): void {
+    this.vegetationInitialized = true;
     this.vegetation.initialize(
       this.terrain,
       this.rainfall.distribution,
@@ -434,6 +451,15 @@ export class Simulation {
       this.persistentWetness,
       this.floodProne,
     );
+    this.vegetationBiomass = this.vegetation.getBiomass();
+    this.vegetationDensity = this.vegetation.getDensityClass();
+    this.vegetationProfile = this.vegetation.getProfileId();
+    this.vegetationSpeciesId = this.vegetation.getDominantSpeciesId();
+    this.vegetationPhenotype = this.vegetation.getPhenotypeClass();
+    this.vegetationRevision += 1;
+  }
+
+  private syncVegetationState(): void {
     this.vegetationBiomass = this.vegetation.getBiomass();
     this.vegetationDensity = this.vegetation.getDensityClass();
     this.vegetationProfile = this.vegetation.getProfileId();
