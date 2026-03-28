@@ -2,7 +2,7 @@ import { createScene, frameCameraOnTerrain } from "./scene/createScene";
 import { PlantRenderer } from "./scene/plantRenderer";
 import { TerrainMeshRenderer } from "./scene/terrainMesh";
 import { WaterOverlayRenderer, type WaterOverlayViewOptions } from "./scene/waterOverlay";
-import { Matrix, Vector3 } from "@babylonjs/core";
+import { Color3, Matrix, Mesh, MeshBuilder, StandardMaterial, Vector3 } from "@babylonjs/core";
 import type { SandboxToolMode } from "./sim/Sandbox";
 import { Simulation } from "./sim/Simulation";
 import { createControls } from "./ui/controls";
@@ -21,6 +21,8 @@ class TerrainHydrologyApp {
   private readonly waterOverlayRenderer;
   private readonly controls;
   private readonly brushPreview;
+  private readonly selectionMarker;
+  private readonly handleKeydown: (event: KeyboardEvent) => void;
 
   private isRunning = true;
   private simulationSpeed = 1;
@@ -29,12 +31,14 @@ class TerrainHydrologyApp {
   private sandboxBrushSize = 2;
   private sandboxStrength = 1;
   private hoveredBrushPoint: Vector3 | null = null;
+  private selectedPlantCell: { x: number; y: number } | null = null;
   private viewOptions: WaterOverlayViewOptions = {
     showRivers: true,
     showWaterDepth: true,
     showMoisture: false,
     showTemperature: false,
     showVegetation: false,
+    plantDiagnosticOverlay: "none",
   };
 
   public constructor(canvas: HTMLCanvasElement) {
@@ -48,6 +52,27 @@ class TerrainHydrologyApp {
     this.plantRenderer = new PlantRenderer(this.sceneBundle.scene);
     this.terrainMeshRenderer = new TerrainMeshRenderer(this.sceneBundle.scene);
     this.waterOverlayRenderer = new WaterOverlayRenderer(this.sceneBundle.scene);
+    this.selectionMarker = this.createSelectionMarker();
+    this.handleKeydown = (event: KeyboardEvent) => {
+      if (event.repeat) {
+        return;
+      }
+
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement
+      ) {
+        return;
+      }
+
+      if (event.key.toLowerCase() === "p") {
+        this.isRunning = !this.isRunning;
+        this.controls.setRunning(this.isRunning);
+      }
+    };
+    window.addEventListener("keydown", this.handleKeydown);
     this.controls = createControls(
       {
         onToggleRunning: (running) => {
@@ -62,6 +87,7 @@ class TerrainHydrologyApp {
         onPlantVegetation: () => {
           this.simulation.initializeVegetationNow();
           this.controls.setVegetationDebug(this.simulation.getVegetationDebugSummary());
+          this.refreshSelectedPlantInspection();
         },
         onRainIntensityChange: (value) => {
           this.simulation.setRainIntensity(value);
@@ -98,6 +124,7 @@ class TerrainHydrologyApp {
     this.attachSandboxInteraction(canvas);
     this.controls.setStats(this.simulation.getStats());
     this.controls.setVegetationDebug(this.simulation.getVegetationDebugSummary());
+    this.controls.setPlantInspection(null);
     this.sceneBundle.engine.runRenderLoop(() => {
       this.updateFrame();
     });
@@ -113,16 +140,20 @@ class TerrainHydrologyApp {
 
   private resetSimulation(): void {
     this.simulation.reset();
+    this.selectedPlantCell = null;
     this.terrainMeshRenderer.resetHydrologyResponse();
     this.controls.setStats(this.simulation.getStats());
     this.controls.setVegetationDebug(this.simulation.getVegetationDebugSummary());
+    this.controls.setPlantInspection(null);
   }
 
   private regenerateTerrain(): void {
     this.simulation.regenerate();
+    this.selectedPlantCell = null;
     this.rebuildTerrainVisuals();
     this.controls.setStats(this.simulation.getStats());
     this.controls.setVegetationDebug(this.simulation.getVegetationDebugSummary());
+    this.controls.setPlantInspection(null);
   }
 
   private updateFrame(): void {
@@ -144,6 +175,12 @@ class TerrainHydrologyApp {
       this.simulation.vegetationBiomass,
       this.simulation.vegetationDensity,
       this.simulation.vegetationProfile,
+      this.simulation.vegetationSpeciesId,
+      this.simulation.getPlantActivityField(),
+      this.simulation.getPlantReproductionReadinessField(),
+      this.simulation.getPlantStressField(),
+      this.simulation.getPlantSuitabilityField(),
+      this.viewOptions.plantDiagnosticOverlay,
       simulatedDeltaSeconds,
       this.viewOptions.showMoisture,
       this.viewOptions.showTemperature,
@@ -167,6 +204,7 @@ class TerrainHydrologyApp {
     );
 
     this.updateBrushPreview();
+    this.updateSelectionMarker();
 
     this.sceneBundle.scene.render();
 
@@ -174,6 +212,7 @@ class TerrainHydrologyApp {
     if (this.statsAccumulator >= 0.15) {
       this.controls.setStats(this.simulation.getStats());
       this.controls.setVegetationDebug(this.simulation.getVegetationDebugSummary());
+      this.refreshSelectedPlantInspection();
       this.statsAccumulator = 0;
     }
   }
@@ -189,7 +228,7 @@ class TerrainHydrologyApp {
     });
 
     canvas.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0 || this.sandboxMode === "view") {
+      if (event.button !== 0) {
         return;
       }
 
@@ -205,6 +244,12 @@ class TerrainHydrologyApp {
         return;
       }
 
+      if (this.sandboxMode === "view") {
+        this.selectedPlantCell = cell;
+        this.refreshSelectedPlantInspection();
+        return;
+      }
+
       this.simulation.applySandboxTool(
         this.sandboxMode,
         cell.x,
@@ -215,6 +260,66 @@ class TerrainHydrologyApp {
       this.controls.setStats(this.simulation.getStats());
       this.hoveredBrushPoint = pickedPoint;
     });
+  }
+
+  /**
+   * Inspection stays in the app layer so the UI can keep a live selected cell
+   * while the simulation continues evolving underneath it.
+   */
+  private refreshSelectedPlantInspection(): void {
+    if (!this.selectedPlantCell) {
+      this.controls.setPlantInspection(null);
+      return;
+    }
+
+    this.controls.setPlantInspection(
+      this.simulation.inspectPlantCell(this.selectedPlantCell.x, this.selectedPlantCell.y),
+    );
+  }
+
+  /**
+   * The selection marker is a purely visual helper for the diagnostics panel.
+   * It makes the currently inspected cell obvious in 3D without affecting plant
+   * growth or terrain state.
+   */
+  private createSelectionMarker(): Mesh {
+    const marker = MeshBuilder.CreateTorus(
+      "plant-selection-marker",
+      {
+        diameter: this.simulation.terrain.cellSize * 0.9,
+        thickness: this.simulation.terrain.cellSize * 0.08,
+        tessellation: 48,
+      },
+      this.sceneBundle.scene,
+    );
+    const material = new StandardMaterial("plant-selection-marker-material", this.sceneBundle.scene);
+    material.disableLighting = true;
+    material.diffuseColor = new Color3(0.2, 0.85, 1);
+    material.emissiveColor = new Color3(0.08, 0.42, 0.56);
+    material.alpha = 0.92;
+    marker.material = material;
+    marker.renderingGroupId = 3;
+    marker.isPickable = false;
+    marker.rotation.x = 0;
+    marker.isVisible = false;
+    return marker;
+  }
+
+  private updateSelectionMarker(): void {
+    if (!this.selectedPlantCell) {
+      this.selectionMarker.isVisible = false;
+      return;
+    }
+
+    const worldPoint = this.cellToWorldPoint(this.selectedPlantCell.x, this.selectedPlantCell.y);
+    if (!worldPoint) {
+      this.selectionMarker.isVisible = false;
+      return;
+    }
+
+    this.selectionMarker.position.copyFrom(worldPoint);
+    this.selectionMarker.scaling.set(1, 1, 1);
+    this.selectionMarker.isVisible = true;
   }
 
   private pickTerrainPoint(): Vector3 | null {
@@ -292,6 +397,22 @@ class TerrainHydrologyApp {
     }
 
     return { x, y };
+  }
+
+  private cellToWorldPoint(cellX: number, cellY: number): Vector3 | null {
+    if (!this.simulation.terrain.grid.isInside(cellX, cellY)) {
+      return null;
+    }
+
+    const terrain = this.simulation.terrain;
+    const index = terrain.grid.index(cellX, cellY);
+    const halfWidth = (terrain.grid.width - 1) * terrain.cellSize * 0.5;
+    const halfHeight = (terrain.grid.height - 1) * terrain.cellSize * 0.5;
+    const x = cellX * terrain.cellSize - halfWidth;
+    const z = cellY * terrain.cellSize - halfHeight;
+    const y = terrain.heights[index] + Math.max(0.08, this.simulation.waterDepth[index] * 0.18 + 0.08);
+
+    return new Vector3(x, y, z);
   }
 }
 

@@ -19,6 +19,14 @@ export interface PlantSeasonalResponse {
   reserveLevel: number;
   foliageLevel: number;
   dormancyPressure: number;
+  targetActivity: number;
+  targetFoliage: number;
+  opportunity: number;
+  unfavorablePressure: number;
+  storageDemand: number;
+  storageRecovery: number;
+  reserveGain: number;
+  reserveUse: number;
   maintenanceScale: number;
   waterDemandScale: number;
   growthScale: number;
@@ -218,6 +226,14 @@ export function computePlantSeasonalResponse(
     reserveLevel,
     foliageLevel,
     dormancyPressure,
+    targetActivity,
+    targetFoliage,
+    opportunity,
+    unfavorablePressure,
+    storageDemand,
+    storageRecovery,
+    reserveGain,
+    reserveUse,
     maintenanceScale,
     waterDemandScale,
     growthScale,

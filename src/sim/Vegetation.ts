@@ -1,5 +1,9 @@
 import { clamp, lerp } from "../utils/math";
 import { valueNoise2D } from "../utils/noise";
+import type {
+  PlantPopulationDiagnostics,
+  PlantSelectionDiagnostics,
+} from "./PlantDiagnostics";
 import type { TerrainData } from "./Terrain";
 import {
   computePlantSeasonalResponse,
@@ -82,7 +86,19 @@ export interface VegetationDebugSummary {
   averageDormancyPressure: number;
   seasonalActivitySummary: string;
   seasonalSuppressionSummary: string;
+  population: PlantPopulationDiagnostics;
 }
+
+const DEATH_REASON_NONE = 0;
+const DEATH_REASON_CAPACITY = 1;
+const DEATH_REASON_DROUGHT = 2;
+const DEATH_REASON_FLOOD = 3;
+const DEATH_REASON_TEMPERATURE = 4;
+const DEATH_REASON_SLOPE = 5;
+const DEATH_REASON_STANDING_WATER = 6;
+const DEATH_REASON_MAINTENANCE = 7;
+const DEATH_REASON_SEASONAL = 8;
+const DEATH_REASON_MULTI = 9;
 
 /**
  * VegetationModel now bridges ecological fields and heritable species data.
@@ -147,8 +163,71 @@ export class VegetationModel {
   private readonly foliageLevel: Float32Array;
   private readonly nextFoliageLevel: Float32Array;
   private readonly dormancyPressure: Float32Array;
+  private readonly suitabilityField: Float32Array;
+  private readonly carryingCapacityField: Float32Array;
+  private readonly reproductionReadinessField: Float32Array;
+  private readonly activityField: Float32Array;
+  private readonly stressField: Float32Array;
+  private readonly maintenanceField: Float32Array;
+  private readonly droughtStressField: Float32Array;
+  private readonly floodStressField: Float32Array;
+  private readonly temperatureStressField: Float32Array;
+  private readonly slopeStressField: Float32Array;
+  private readonly standingWaterStressField: Float32Array;
+  private readonly biomassNetDeltaField: Float32Array;
+  private readonly growthGainField: Float32Array;
+  private readonly colonizationGainField: Float32Array;
+  private readonly declineLossField: Float32Array;
+  private readonly maintenanceLossField: Float32Array;
+  private readonly droughtLossField: Float32Array;
+  private readonly floodLossField: Float32Array;
+  private readonly slopeLossField: Float32Array;
+  private readonly standingWaterLossField: Float32Array;
+  private readonly storageReliefField: Float32Array;
+  private readonly reserveDeltaField: Float32Array;
+  private readonly reserveGainField: Float32Array;
+  private readonly reserveUseField: Float32Array;
+  private readonly storageDemandField: Float32Array;
+  private readonly storageRecoveryField: Float32Array;
+  private readonly opportunityField: Float32Array;
+  private readonly unfavorablePressureField: Float32Array;
+  private readonly maintenanceScaleField: Float32Array;
+  private readonly waterDemandScaleField: Float32Array;
+  private readonly growthScaleField: Float32Array;
+  private readonly stressScaleField: Float32Array;
+  private readonly targetActivityField: Float32Array;
+  private readonly targetFoliageField: Float32Array;
+  private readonly growthPotentialField: Float32Array;
+  private readonly declinePressureField: Float32Array;
+  private readonly competitionField: Float32Array;
+  private readonly competitionAdvantageField: Float32Array;
+  private readonly activityDeltaField: Float32Array;
+  private readonly foliageDeltaField: Float32Array;
+  private readonly growthSuppressionField: Float32Array;
+  private readonly spreadScaleField: Float32Array;
+  private readonly spreadDriveField: Float32Array;
   private readonly neighborSupport: Float32Array;
   private readonly nearbyWetness: Float32Array;
+  private readonly recentDeathSpeciesId: Uint16Array;
+  private readonly recentDeathGeneration: Uint8Array;
+  private readonly recentDeathAgeSeconds: Float32Array;
+  private readonly recentDeathBiomass: Float32Array;
+  private readonly recentDeathReason: Uint8Array;
+  private readonly historyLength = 16;
+  private historyCursor = 0;
+  private historySamples = 0;
+  private readonly biomassHistory: Float32Array;
+  private readonly reserveHistory: Float32Array;
+  private readonly moistureHistory: Float32Array;
+  private readonly stressHistory: Float32Array;
+  private readonly reproductionHistory: Float32Array;
+  private readonly recentColonizationsHistory: Uint16Array;
+  private readonly recentDeathsHistory: Uint16Array;
+  private readonly recentExtinctionsHistory: Uint16Array;
+  private readonly previousOccupancyCounts: Int16Array;
+  private readonly currentOccupancyCounts: Int16Array;
+  private topExpandingLineages = "none";
+  private topDecliningLineages = "none";
   private completedLifespanSeconds = 0;
   private completedLives = 0;
 
@@ -174,8 +253,67 @@ export class VegetationModel {
     this.foliageLevel = new Float32Array(cellCount);
     this.nextFoliageLevel = new Float32Array(cellCount);
     this.dormancyPressure = new Float32Array(cellCount);
+    this.suitabilityField = new Float32Array(cellCount);
+    this.carryingCapacityField = new Float32Array(cellCount);
+    this.reproductionReadinessField = new Float32Array(cellCount);
+    this.activityField = new Float32Array(cellCount);
+    this.stressField = new Float32Array(cellCount);
+    this.maintenanceField = new Float32Array(cellCount);
+    this.droughtStressField = new Float32Array(cellCount);
+    this.floodStressField = new Float32Array(cellCount);
+    this.temperatureStressField = new Float32Array(cellCount);
+    this.slopeStressField = new Float32Array(cellCount);
+    this.standingWaterStressField = new Float32Array(cellCount);
+    this.biomassNetDeltaField = new Float32Array(cellCount);
+    this.growthGainField = new Float32Array(cellCount);
+    this.colonizationGainField = new Float32Array(cellCount);
+    this.declineLossField = new Float32Array(cellCount);
+    this.maintenanceLossField = new Float32Array(cellCount);
+    this.droughtLossField = new Float32Array(cellCount);
+    this.floodLossField = new Float32Array(cellCount);
+    this.slopeLossField = new Float32Array(cellCount);
+    this.standingWaterLossField = new Float32Array(cellCount);
+    this.storageReliefField = new Float32Array(cellCount);
+    this.reserveDeltaField = new Float32Array(cellCount);
+    this.reserveGainField = new Float32Array(cellCount);
+    this.reserveUseField = new Float32Array(cellCount);
+    this.storageDemandField = new Float32Array(cellCount);
+    this.storageRecoveryField = new Float32Array(cellCount);
+    this.opportunityField = new Float32Array(cellCount);
+    this.unfavorablePressureField = new Float32Array(cellCount);
+    this.maintenanceScaleField = new Float32Array(cellCount);
+    this.waterDemandScaleField = new Float32Array(cellCount);
+    this.growthScaleField = new Float32Array(cellCount);
+    this.stressScaleField = new Float32Array(cellCount);
+    this.targetActivityField = new Float32Array(cellCount);
+    this.targetFoliageField = new Float32Array(cellCount);
+    this.growthPotentialField = new Float32Array(cellCount);
+    this.declinePressureField = new Float32Array(cellCount);
+    this.competitionField = new Float32Array(cellCount);
+    this.competitionAdvantageField = new Float32Array(cellCount);
+    this.activityDeltaField = new Float32Array(cellCount);
+    this.foliageDeltaField = new Float32Array(cellCount);
+    this.growthSuppressionField = new Float32Array(cellCount);
+    this.spreadScaleField = new Float32Array(cellCount);
+    this.spreadDriveField = new Float32Array(cellCount);
     this.neighborSupport = new Float32Array(cellCount);
     this.nearbyWetness = new Float32Array(cellCount);
+    this.recentDeathSpeciesId = new Uint16Array(cellCount);
+    this.recentDeathSpeciesId.fill(SPECIES_NONE);
+    this.recentDeathGeneration = new Uint8Array(cellCount);
+    this.recentDeathAgeSeconds = new Float32Array(cellCount);
+    this.recentDeathBiomass = new Float32Array(cellCount);
+    this.recentDeathReason = new Uint8Array(cellCount);
+    this.biomassHistory = new Float32Array(cellCount * this.historyLength);
+    this.reserveHistory = new Float32Array(cellCount * this.historyLength);
+    this.moistureHistory = new Float32Array(cellCount * this.historyLength);
+    this.stressHistory = new Float32Array(cellCount * this.historyLength);
+    this.reproductionHistory = new Float32Array(cellCount * this.historyLength);
+    this.recentColonizationsHistory = new Uint16Array(this.historyLength);
+    this.recentDeathsHistory = new Uint16Array(this.historyLength);
+    this.recentExtinctionsHistory = new Uint16Array(this.historyLength);
+    this.previousOccupancyCounts = new Int16Array(this.settings.maxSpeciesCount);
+    this.currentOccupancyCounts = new Int16Array(this.settings.maxSpeciesCount);
   }
 
   public getBiomass(): Float32Array {
@@ -200,6 +338,22 @@ export class VegetationModel {
 
   public getSpeciesCatalog(): readonly PlantSpeciesDefinition[] {
     return this.speciesCatalog;
+  }
+
+  public getActivityField(): Float32Array {
+    return this.activityField;
+  }
+
+  public getReproductionReadinessField(): Float32Array {
+    return this.reproductionReadinessField;
+  }
+
+  public getStressField(): Float32Array {
+    return this.stressField;
+  }
+
+  public getSuitabilityField(): Float32Array {
+    return this.suitabilityField;
   }
 
   public getDebugSummary(): VegetationDebugSummary {
@@ -321,6 +475,15 @@ export class VegetationModel {
         averageReserveLevel,
         dominantPressureEntry?.[0] ?? "mixed",
       ),
+      population: {
+        recentColonizations: this.sumRecentHistory(this.recentColonizationsHistory),
+        recentDeaths: this.sumRecentHistory(this.recentDeathsHistory),
+        recentExtinctions: this.sumRecentHistory(this.recentExtinctionsHistory),
+        averageReproductionReadiness:
+          livingCellCount > 0 ? this.sumVisibleField(this.reproductionReadinessField) / livingCellCount : 0,
+        topExpandingLineages: this.topExpandingLineages,
+        topDecliningLineages: this.topDecliningLineages,
+      },
     };
   }
 
@@ -345,8 +508,70 @@ export class VegetationModel {
     this.foliageLevel.fill(0);
     this.nextFoliageLevel.fill(0);
     this.dormancyPressure.fill(0);
+    this.suitabilityField.fill(0);
+    this.carryingCapacityField.fill(0);
+    this.reproductionReadinessField.fill(0);
+    this.activityField.fill(0);
+    this.stressField.fill(0);
+    this.maintenanceField.fill(0);
+    this.droughtStressField.fill(0);
+    this.floodStressField.fill(0);
+    this.temperatureStressField.fill(0);
+    this.slopeStressField.fill(0);
+    this.standingWaterStressField.fill(0);
+    this.biomassNetDeltaField.fill(0);
+    this.growthGainField.fill(0);
+    this.colonizationGainField.fill(0);
+    this.declineLossField.fill(0);
+    this.maintenanceLossField.fill(0);
+    this.droughtLossField.fill(0);
+    this.floodLossField.fill(0);
+    this.slopeLossField.fill(0);
+    this.standingWaterLossField.fill(0);
+    this.storageReliefField.fill(0);
+    this.reserveDeltaField.fill(0);
+    this.reserveGainField.fill(0);
+    this.reserveUseField.fill(0);
+    this.storageDemandField.fill(0);
+    this.storageRecoveryField.fill(0);
+    this.opportunityField.fill(0);
+    this.unfavorablePressureField.fill(0);
+    this.maintenanceScaleField.fill(0);
+    this.waterDemandScaleField.fill(0);
+    this.growthScaleField.fill(0);
+    this.stressScaleField.fill(0);
+    this.targetActivityField.fill(0);
+    this.targetFoliageField.fill(0);
+    this.growthPotentialField.fill(0);
+    this.declinePressureField.fill(0);
+    this.competitionField.fill(0);
+    this.competitionAdvantageField.fill(0);
+    this.activityDeltaField.fill(0);
+    this.foliageDeltaField.fill(0);
+    this.growthSuppressionField.fill(0);
+    this.spreadScaleField.fill(0);
+    this.spreadDriveField.fill(0);
     this.neighborSupport.fill(0);
     this.nearbyWetness.fill(0);
+    this.recentDeathSpeciesId.fill(SPECIES_NONE);
+    this.recentDeathGeneration.fill(0);
+    this.recentDeathAgeSeconds.fill(0);
+    this.recentDeathBiomass.fill(0);
+    this.recentDeathReason.fill(0);
+    this.historyCursor = 0;
+    this.historySamples = 0;
+    this.biomassHistory.fill(0);
+    this.reserveHistory.fill(0);
+    this.moistureHistory.fill(0);
+    this.stressHistory.fill(0);
+    this.reproductionHistory.fill(0);
+    this.recentColonizationsHistory.fill(0);
+    this.recentDeathsHistory.fill(0);
+    this.recentExtinctionsHistory.fill(0);
+    this.previousOccupancyCounts.fill(0);
+    this.currentOccupancyCounts.fill(0);
+    this.topExpandingLineages = "none";
+    this.topDecliningLineages = "none";
   }
 
   /**
@@ -450,6 +675,7 @@ export class VegetationModel {
     }
 
     this.refreshDerivedState();
+    this.pushHistorySamples(soilMoisture);
   }
 
   /**
@@ -476,6 +702,8 @@ export class VegetationModel {
     this.vegetationStepCounter += 1;
     const growthMultiplier = clamp(seasonalGrowthMultiplier, 0.6, 1.5);
     const stressMultiplier = clamp(seasonalStressMultiplier, 0.7, 1.8);
+    let colonizationsThisStep = 0;
+    let deathsThisStep = 0;
     this.updateNeighborhoodSignals(terrain, soilMoisture, persistentWetness);
 
     for (let y = 0; y < terrain.grid.height; y += 1) {
@@ -530,7 +758,6 @@ export class VegetationModel {
               normalizedElevation,
             )
           : 0;
-
         let targetSpeciesId = currentSpeciesId;
         let targetSuitability = currentSuitability;
 
@@ -637,54 +864,94 @@ export class VegetationModel {
               seasonalResponse.stressScale,
             )
           : 0;
+        const temperatureStress = activeStressSpecies
+          ? this.computeTemperatureStress(activeStressSpecies, temperature[index], seasonalResponse.stressScale)
+          : 0;
 
         let nextBiomass = currentBiomass;
         let nextActivity = 0;
         let nextReserve = 0;
         let nextFoliage = 0;
         let nextDormancyPressure = 0;
+        let maintenancePressure = 0;
+        let standingWaterStress = 0;
+        let diagnosticSpreadScale = 0;
+        let diagnosticSpreadDrive = 0;
+        let diagnosticReproductionReadiness = seasonalResponse.reproductionReadiness;
+        let growthPotential = 0;
+        let declinePressure = 0;
+        let growthGain = 0;
+        let colonizationGain = 0;
+        let declineLoss = 0;
+        let maintenanceLoss = 0;
+        let droughtLoss = 0;
+        let floodLoss = 0;
+        let slopeLoss = 0;
+        let standingWaterLoss = 0;
+        let storageRelief = 0;
+        let growthSuppression = 0;
 
         if (currentSpeciesId !== SPECIES_NONE && targetSpeciesId !== SPECIES_NONE) {
-          const growthPotential = clamp(carryingCapacity - currentBiomass, 0, 1);
-          const declinePressure = clamp(currentBiomass - carryingCapacity, 0, 1);
-          const standingWaterStress = Math.max(
+          growthPotential = clamp(carryingCapacity - currentBiomass, 0, 1);
+          declinePressure = clamp(currentBiomass - carryingCapacity, 0, 1);
+          standingWaterStress = Math.max(
             0,
             standingWater - this.resolveStandingWaterTolerance(this.dominantSpeciesId[index]),
           );
-          const maintenancePressure =
+          maintenancePressure =
             morphologyEffects.maintenanceCost *
             this.settings.morphologyMaintenanceStrength *
             (0.42 + habitat.dryness * 0.34 + habitat.slope * 0.16 + standingWater * 0.08) *
             seasonalResponse.maintenanceScale;
-
-          nextBiomass +=
+          diagnosticSpreadScale = seasonalResponse.spreadScale;
+          diagnosticSpreadDrive = morphologyEffects.spreadDrive;
+          growthSuppression = clamp(
+            maintenancePressure * 0.28 + seasonalResponse.storageInvestmentCost * 0.3,
+            0,
+            0.95,
+          );
+          growthGain =
             growthPotential *
             this.settings.growthRate *
             (0.32 + support * 0.68) *
             (0.74 + morphologyPerformance * 0.16 + competitionAdvantage * 0.1) *
-            (1 - maintenancePressure * 0.28 - seasonalResponse.storageInvestmentCost * 0.3) *
+            (1 - growthSuppression) *
             seasonalResponse.growthScale *
             growthMultiplier *
             this.resolveVigor(activeStressSpeciesId) *
             dtSeconds;
-          nextBiomass -=
-            (declinePressure * this.settings.declineRate +
-              maintenancePressure +
-              droughtStress *
-                this.settings.droughtStressStrength *
-                stressMultiplier *
-                seasonalResponse.stressScale +
-              floodStress *
-                this.settings.floodStressStrength *
-                stressMultiplier *
-                lerp(seasonalResponse.stressScale, 1, 0.35) +
-              slopeStress *
-                this.settings.slopeStressStrength *
-                lerp(stressMultiplier, 1, 0.5) *
-                lerp(seasonalResponse.stressScale, 1, 0.45) +
-              standingWaterStress * 0.16 * seasonalResponse.stressScale -
-              seasonalResponse.storageSupport * 0.12) *
+          declineLoss = declinePressure * this.settings.declineRate * dtSeconds;
+          maintenanceLoss = maintenancePressure * dtSeconds;
+          droughtLoss =
+            droughtStress *
+            this.settings.droughtStressStrength *
+            stressMultiplier *
+            seasonalResponse.stressScale *
             dtSeconds;
+          floodLoss =
+            floodStress *
+            this.settings.floodStressStrength *
+            stressMultiplier *
+            lerp(seasonalResponse.stressScale, 1, 0.35) *
+            dtSeconds;
+          slopeLoss =
+            slopeStress *
+            this.settings.slopeStressStrength *
+            lerp(stressMultiplier, 1, 0.5) *
+            lerp(seasonalResponse.stressScale, 1, 0.45) *
+            dtSeconds;
+          standingWaterLoss = standingWaterStress * 0.16 * seasonalResponse.stressScale * dtSeconds;
+          storageRelief = seasonalResponse.storageSupport * 0.12 * dtSeconds;
+
+          nextBiomass += growthGain;
+          nextBiomass -=
+            declineLoss +
+            maintenanceLoss +
+            droughtLoss +
+            floodLoss +
+            slopeLoss +
+            standingWaterLoss -
+            storageRelief;
 
           nextActivity = seasonalResponse.activityLevel;
           nextReserve = seasonalResponse.reserveLevel;
@@ -741,12 +1008,17 @@ export class VegetationModel {
               dtSeconds;
 
             nextBiomass = colonization;
+            colonizationGain = colonization;
             if (nextBiomass > 0.002) {
               this.assignSpeciesToCell(index, colonizerSpeciesId);
+              colonizationsThisStep += 1;
               nextActivity = colonizerSeasonalResponse.activityLevel;
               nextReserve = colonizerSeasonalResponse.reserveLevel;
               nextFoliage = colonizerSeasonalResponse.foliageLevel;
               nextDormancyPressure = colonizerSeasonalResponse.dormancyPressure;
+              diagnosticSpreadScale = colonizerSeasonalResponse.spreadScale;
+              diagnosticSpreadDrive = colonizerEffects.spreadDrive;
+              diagnosticReproductionReadiness = colonizerSeasonalResponse.reproductionReadiness;
             }
           }
         }
@@ -754,8 +1026,28 @@ export class VegetationModel {
         nextBiomass = clamp(nextBiomass, 0, 1);
 
         if (nextBiomass < 0.01) {
+          const deathReason = this.resolveDeathReason(
+            declineLoss,
+            maintenanceLoss,
+            droughtLoss,
+            floodLoss,
+            temperatureStress,
+            slopeLoss,
+            standingWaterLoss,
+            nextDormancyPressure,
+          );
+          this.recordRecentDeath(
+            index,
+            currentSpeciesId,
+            currentAgeSeconds,
+            currentBiomass,
+            deathReason,
+          );
           nextBiomass = 0;
           this.recordCompletedLife(currentSpeciesId, currentAgeSeconds);
+          if (currentSpeciesId !== SPECIES_NONE) {
+            deathsThisStep += 1;
+          }
           this.clearCellSpecies(index);
           nextActivity = 0;
           nextReserve = 0;
@@ -775,6 +1067,59 @@ export class VegetationModel {
         this.nextReserveLevel[index] = nextReserve;
         this.nextFoliageLevel[index] = nextFoliage;
         this.dormancyPressure[index] = nextDormancyPressure;
+        this.suitabilityField[index] = targetSuitability;
+        this.carryingCapacityField[index] = carryingCapacity;
+        this.reproductionReadinessField[index] = diagnosticReproductionReadiness;
+        this.activityField[index] = nextActivity;
+        this.maintenanceField[index] = maintenancePressure;
+        this.droughtStressField[index] = droughtStress;
+        this.floodStressField[index] = floodStress;
+        this.temperatureStressField[index] = temperatureStress;
+        this.slopeStressField[index] = slopeStress;
+        this.standingWaterStressField[index] = standingWaterStress;
+        this.biomassNetDeltaField[index] = nextBiomass - currentBiomass;
+        this.growthGainField[index] = growthGain;
+        this.colonizationGainField[index] = colonizationGain;
+        this.declineLossField[index] = declineLoss;
+        this.maintenanceLossField[index] = maintenanceLoss;
+        this.droughtLossField[index] = droughtLoss;
+        this.floodLossField[index] = floodLoss;
+        this.slopeLossField[index] = slopeLoss;
+        this.standingWaterLossField[index] = standingWaterLoss;
+        this.storageReliefField[index] = storageRelief;
+        this.reserveDeltaField[index] = nextReserve - currentReserve;
+        this.reserveGainField[index] = seasonalResponse.reserveGain;
+        this.reserveUseField[index] = seasonalResponse.reserveUse;
+        this.storageDemandField[index] = seasonalResponse.storageDemand;
+        this.storageRecoveryField[index] = seasonalResponse.storageRecovery;
+        this.opportunityField[index] = seasonalResponse.opportunity;
+        this.unfavorablePressureField[index] = seasonalResponse.unfavorablePressure;
+        this.maintenanceScaleField[index] = seasonalResponse.maintenanceScale;
+        this.waterDemandScaleField[index] = seasonalResponse.waterDemandScale;
+        this.growthScaleField[index] = seasonalResponse.growthScale;
+        this.stressScaleField[index] = seasonalResponse.stressScale;
+        this.targetActivityField[index] = seasonalResponse.targetActivity;
+        this.targetFoliageField[index] = seasonalResponse.targetFoliage;
+        this.growthPotentialField[index] = growthPotential;
+        this.declinePressureField[index] = declinePressure;
+        this.competitionField[index] = competition;
+        this.competitionAdvantageField[index] = competitionAdvantage;
+        this.activityDeltaField[index] = nextActivity - currentActivity;
+        this.foliageDeltaField[index] = nextFoliage - currentFoliage;
+        this.growthSuppressionField[index] = growthSuppression;
+        this.spreadScaleField[index] = diagnosticSpreadScale;
+        this.spreadDriveField[index] = diagnosticSpreadDrive;
+        this.stressField[index] = clamp(
+          this.maintenanceField[index] * 0.35 +
+            droughtStress * 0.28 +
+            floodStress * 0.16 +
+            temperatureStress * 0.1 +
+            slopeStress * 0.07 +
+            this.standingWaterStressField[index] * 0.04 +
+            nextDormancyPressure * 0.18,
+          0,
+          1,
+        );
       }
     }
 
@@ -783,7 +1128,280 @@ export class VegetationModel {
     this.activityLevel.set(this.nextActivityLevel);
     this.reserveLevel.set(this.nextReserveLevel);
     this.foliageLevel.set(this.nextFoliageLevel);
+    const extinctionsThisStep = this.updatePopulationChangeTracking();
+    this.pushRecentCounts(colonizationsThisStep, deathsThisStep, extinctionsThisStep);
+    this.pushHistorySamples(soilMoisture);
     this.refreshDerivedState();
+  }
+
+  public inspectCell(
+    terrain: TerrainData,
+    cellX: number,
+    cellY: number,
+    soilMoisture: Float32Array,
+    temperature: Float32Array,
+    persistentWetness: Float32Array,
+    floodProne: Float32Array,
+    waterDepth: Float32Array,
+    season: {
+      phase: number;
+      rainfallMultiplier: number;
+      temperatureOffset: number;
+      evaporationMultiplier: number;
+      seasonLabel: string;
+    },
+  ): PlantSelectionDiagnostics {
+    const index = terrain.grid.index(cellX, cellY);
+    const speciesId = this.dominantSpeciesId[index];
+    const occupied = speciesId !== SPECIES_NONE && this.biomass[index] >= 0.01;
+    const slope = this.sampleSlope(terrain, cellX, cellY);
+    const normalizedElevation = this.normalizeElevation(terrain, index);
+    const habitat = buildHabitatPressureProfile(
+      soilMoisture[index],
+      temperature[index],
+      persistentWetness[index],
+      floodProne[index],
+      clamp(waterDepth[index] / 0.05, 0, 1),
+      slope,
+      this.nearbyWetness[index],
+      normalizedElevation,
+    );
+    const bestCandidate = this.pickBestSpecies(
+      habitat,
+      soilMoisture[index],
+      temperature[index],
+      persistentWetness[index],
+      floodProne[index],
+      clamp(waterDepth[index] / 0.05, 0, 1),
+      slope,
+      normalizedElevation,
+    );
+    const species = occupied ? this.speciesCatalog[speciesId] ?? null : null;
+    const suitability = occupied ? this.suitabilityField[index] : bestCandidate.score;
+    const carryingCapacity = occupied ? this.carryingCapacityField[index] : 0;
+    const blockedReason = this.describeReproductionBlockReason(
+      occupied,
+      this.reproductionReadinessField[index],
+      suitability,
+      this.reserveLevel[index],
+      species?.seasonal.reproductionThreshold ?? 0,
+      this.neighborSupport[index],
+      this.activityLevel[index],
+    );
+    const maturityLevel = species
+      ? clamp(this.biomass[index] / Math.max(species.seasonal.reproductionThreshold, 0.08), 0, 1)
+      : 0;
+    const dominantStress = this.getDominantStressLabel(
+      this.droughtStressField[index],
+      this.floodStressField[index],
+      this.temperatureStressField[index],
+      this.slopeStressField[index],
+      this.maintenanceField[index],
+      this.dormancyPressure[index],
+      this.standingWaterStressField[index],
+    );
+    const explanation = occupied
+      ? this.describeCellOutcome(index, suitability, carryingCapacity, dominantStress)
+      : this.describeEmptyCell(index, bestCandidate.score, dominantStress);
+    const history = this.extractCellHistory(index);
+    const ecologyTraits = species
+      ? {
+          moisturePreference: species.ecology.moisturePreference,
+          moistureTolerance: species.ecology.moistureTolerance,
+          floodTolerance: species.ecology.floodTolerance,
+          droughtTolerance: species.ecology.droughtTolerance,
+          temperatureOptimal: species.ecology.optimalTemperature,
+          temperatureTolerance: species.ecology.temperatureTolerance,
+          heatStressResistance: species.ecology.heatStressResistance,
+          slopeTolerance: species.ecology.slopeTolerance,
+          spreadAbility: species.ecology.spreadAbility,
+          vigor: species.ecology.vigor,
+        }
+      : undefined;
+    const morphologyTraits = species
+      ? {
+          maxHeight: species.morphology.maxHeight,
+          woodiness: species.morphology.woodiness,
+          stemCount: species.morphology.stemCount,
+          trunkThickness: species.morphology.trunkThickness,
+          branchingRate: species.morphology.branchingRate,
+          crownRadius: species.morphology.crownRadius,
+          crownDensity: species.morphology.crownDensity,
+          foliageDensity: species.morphology.foliageDensity,
+          lateralSpread: species.morphology.lateralSpread,
+          groundCoverFactor: species.morphology.groundCoverFactor,
+          clumping: species.morphology.clumping,
+        }
+      : undefined;
+    const seasonalTraits = species
+      ? {
+          dormancyTendency: species.seasonal.dormancyTendency,
+          drynessTrigger: species.seasonal.dormancyTriggerDryness,
+          coldTrigger: species.seasonal.dormancyTriggerColdOrLowTemperature,
+          storageCapacity: species.seasonal.resourceStorageCapacity,
+          reactivationSpeed: species.seasonal.reactivationSpeed,
+          growthWindowFlexibility: species.seasonal.growthWindowFlexibility,
+          leafPersistence: species.seasonal.leafPersistence,
+          leafDropBias: species.seasonal.leafDropBias,
+          regrowthRate: species.seasonal.regrowthRate,
+          reproductionThreshold: species.seasonal.reproductionThreshold,
+        }
+      : undefined;
+
+    return {
+      cellX,
+      cellY,
+      occupied,
+      speciesId: occupied ? speciesId : null,
+      parentSpeciesId: species?.parentId ?? null,
+      generation: species?.generation ?? null,
+      lineageLabel: occupied ? `S${speciesId} · G${species?.generation ?? 0}` : "empty habitat",
+      explanation,
+      currentState: {
+        ageSeconds: this.ageSeconds[index],
+        biomass: this.biomass[index],
+        health: clamp(carryingCapacity * (1 - this.stressField[index] * 0.72), 0, 1),
+        vigor: species?.ecology.vigor ?? 0,
+        reserveLevel: this.reserveLevel[index],
+        activityLevel: this.activityLevel[index],
+        dormancyPressure: this.dormancyPressure[index],
+        foliageLevel: this.foliageLevel[index],
+        maturityLevel,
+        reproductionReadiness: this.reproductionReadinessField[index],
+      },
+      reproduction: {
+        allowedLikely:
+          occupied &&
+          this.reproductionReadinessField[index] >= 0.2 &&
+          suitability >= this.settings.colonizationThreshold,
+        blockedReason,
+        spreadAbility: species?.ecology.spreadAbility ?? 0,
+        spreadDrive: this.spreadDriveField[index],
+        spreadScale: this.spreadScaleField[index],
+        colonizationThreshold: this.settings.colonizationThreshold,
+        localSuitability: suitability,
+        reproductionThreshold: species?.seasonal.reproductionThreshold ?? 0,
+        reserveSufficiency: species
+          ? clamp(
+              (this.reserveLevel[index] - species.seasonal.reproductionThreshold) /
+                Math.max(1 - species.seasonal.reproductionThreshold, 0.08),
+              0,
+              1,
+            )
+          : 0,
+        neighborSupport: this.neighborSupport[index],
+      },
+      decline: {
+        maintenanceBurden: this.maintenanceField[index],
+        droughtStress: this.droughtStressField[index],
+        floodStress: this.floodStressField[index],
+        temperatureStress: this.temperatureStressField[index],
+        seasonalSuppression: this.dormancyPressure[index],
+        slopeStress: this.slopeStressField[index],
+        standingWaterStress: this.standingWaterStressField[index],
+        carryingCapacityPressure: clamp(this.biomass[index] - carryingCapacity, 0, 1),
+        totalStress: this.stressField[index],
+        dominantStress,
+      },
+      budget: {
+        netBiomassDelta: this.biomassNetDeltaField[index],
+        totalGain: this.growthGainField[index] + this.colonizationGainField[index] + this.storageReliefField[index],
+        totalLoss:
+          this.declineLossField[index] +
+          this.maintenanceLossField[index] +
+          this.droughtLossField[index] +
+          this.floodLossField[index] +
+          this.slopeLossField[index] +
+          this.standingWaterLossField[index],
+        growthGain: this.growthGainField[index],
+        colonizationGain: this.colonizationGainField[index],
+        declineLoss: this.declineLossField[index],
+        maintenanceLoss: this.maintenanceLossField[index],
+        droughtLoss: this.droughtLossField[index],
+        floodLoss: this.floodLossField[index],
+        slopeLoss: this.slopeLossField[index],
+        standingWaterLoss: this.standingWaterLossField[index],
+        storageRelief: this.storageReliefField[index],
+        reserveDelta: this.reserveDeltaField[index],
+        activityDelta: this.activityDeltaField[index],
+        foliageDelta: this.foliageDeltaField[index],
+        growthSuppression: this.growthSuppressionField[index],
+        reserveGain: this.reserveGainField[index],
+        reserveUse: this.reserveUseField[index],
+        storageDemand: this.storageDemandField[index],
+        storageRecovery: this.storageRecoveryField[index],
+        opportunity: this.opportunityField[index],
+        unfavorablePressure: this.unfavorablePressureField[index],
+        maintenanceScale: this.maintenanceScaleField[index],
+        waterDemandScale: this.waterDemandScaleField[index],
+        growthScale: this.growthScaleField[index],
+        stressScale: this.stressScaleField[index],
+        targetActivity: this.targetActivityField[index],
+        targetFoliage: this.targetFoliageField[index],
+        growthPotential: this.growthPotentialField[index],
+        declinePressure: this.declinePressureField[index],
+        competitionPressure: this.competitionField[index],
+        competitionAdvantage: this.competitionAdvantageField[index],
+      },
+      lastOccupant:
+        !occupied && this.recentDeathSpeciesId[index] !== SPECIES_NONE
+          ? {
+              speciesId: this.recentDeathSpeciesId[index],
+              generation: this.recentDeathGeneration[index],
+              ageSeconds: this.recentDeathAgeSeconds[index],
+              deathReason: this.deathReasonLabel(this.recentDeathReason[index]),
+              biomassBeforeDeath: this.recentDeathBiomass[index],
+            }
+          : null,
+      environment: {
+        soilMoisture: soilMoisture[index],
+        surfaceWater: waterDepth[index],
+        persistentWetness: persistentWetness[index],
+        floodProne: floodProne[index],
+        temperature: temperature[index],
+        slope,
+        soilDepth: terrain.soilDepth[index],
+        coarseSurface: terrain.coarseRock[index],
+        bedrockExposure: clamp(
+          1 - (terrain.heights[index] - terrain.bedrockHeights[index]) / Math.max(terrain.soilDepth[index] + terrain.coarseRock[index], 0.001),
+          0,
+          1,
+        ),
+        seasonPhase: season.phase,
+        rainMultiplier: season.rainfallMultiplier,
+        temperatureOffset: season.temperatureOffset,
+        evaporationMultiplier: season.evaporationMultiplier,
+        seasonLabel: season.seasonLabel,
+      },
+      fitness: {
+        carryingCapacity,
+        suitability,
+        positive: {
+          biomassSupport: clamp(carryingCapacity, 0, 1),
+          moistureSupport: habitat.moisture,
+          wetAdjacency: this.nearbyWetness[index],
+          activitySupport: this.activityLevel[index],
+          reserveSupport: this.reserveLevel[index],
+        },
+        negative: {
+          maintenance: this.maintenanceField[index],
+          drought: this.droughtStressField[index],
+          flood: this.floodStressField[index],
+          temperature: this.temperatureStressField[index],
+          slope: this.slopeStressField[index],
+          dormancy: this.dormancyPressure[index],
+        },
+      },
+      history,
+      traits:
+        species && ecologyTraits && morphologyTraits && seasonalTraits
+          ? {
+              ecology: ecologyTraits,
+              morphology: morphologyTraits,
+              seasonal: seasonalTraits,
+            }
+          : undefined,
+    };
   }
 
   private refreshDerivedState(): void {
@@ -1087,6 +1705,11 @@ export class VegetationModel {
     this.dominantSpeciesId[index] = species.id;
     this.ecologyProfileId[index] = species.ecologyProfile;
     this.phenotypeClass[index] = species.phenotype;
+    this.recentDeathSpeciesId[index] = SPECIES_NONE;
+    this.recentDeathGeneration[index] = 0;
+    this.recentDeathAgeSeconds[index] = 0;
+    this.recentDeathBiomass[index] = 0;
+    this.recentDeathReason[index] = DEATH_REASON_NONE;
   }
 
   private resolveNextAge(
@@ -1198,6 +1821,21 @@ export class VegetationModel {
     );
   }
 
+  private computeTemperatureStress(
+    species: PlantSpeciesDefinition,
+    temperature: number,
+    seasonalStressScale: number,
+  ): number {
+    const mismatch = clamp(
+      Math.abs(temperature - species.ecology.optimalTemperature) /
+        Math.max(species.ecology.temperatureTolerance, 0.08),
+      0,
+      1,
+    );
+    const heatPenalty = 1 - species.ecology.heatStressResistance * 0.55;
+    return clamp(mismatch * heatPenalty * seasonalStressScale, 0, 1);
+  }
+
   private computeSlopeStress(
     species: PlantSpeciesDefinition,
     slope: number,
@@ -1232,6 +1870,14 @@ export class VegetationModel {
       reserveLevel: reserve,
       foliageLevel: foliage,
       dormancyPressure: 0,
+      targetActivity: activity,
+      targetFoliage: foliage,
+      opportunity: 0,
+      unfavorablePressure: 0,
+      storageDemand: 0,
+      storageRecovery: 0,
+      reserveGain: 0,
+      reserveUse: 0,
       maintenanceScale: 1,
       waterDemandScale: 1,
       growthScale: 1,
@@ -1241,6 +1887,292 @@ export class VegetationModel {
       storageInvestmentCost: 0,
       storageSupport: 0,
     };
+  }
+
+  private updatePopulationChangeTracking(): number {
+    this.currentOccupancyCounts.fill(0);
+
+    for (let index = 0; index < this.biomass.length; index += 1) {
+      const speciesId = this.dominantSpeciesId[index];
+      if (speciesId === SPECIES_NONE || this.biomass[index] < 0.05 || speciesId >= this.currentOccupancyCounts.length) {
+        continue;
+      }
+      this.currentOccupancyCounts[speciesId] += 1;
+    }
+
+    let extinctions = 0;
+    let bestIncrease = 0;
+    let bestDecrease = 0;
+    let bestIncreaseSpecies = -1;
+    let bestDecreaseSpecies = -1;
+
+    for (let speciesId = 0; speciesId < this.currentOccupancyCounts.length; speciesId += 1) {
+      const delta = this.currentOccupancyCounts[speciesId] - this.previousOccupancyCounts[speciesId];
+      if (this.previousOccupancyCounts[speciesId] > 0 && this.currentOccupancyCounts[speciesId] === 0) {
+        extinctions += 1;
+      }
+      if (delta > bestIncrease) {
+        bestIncrease = delta;
+        bestIncreaseSpecies = speciesId;
+      }
+      if (delta < bestDecrease) {
+        bestDecrease = delta;
+        bestDecreaseSpecies = speciesId;
+      }
+      this.previousOccupancyCounts[speciesId] = this.currentOccupancyCounts[speciesId];
+    }
+
+    this.topExpandingLineages =
+      bestIncreaseSpecies >= 0 && bestIncrease > 0
+        ? `S${bestIncreaseSpecies} +${bestIncrease}`
+        : "none";
+    this.topDecliningLineages =
+      bestDecreaseSpecies >= 0 && bestDecrease < 0
+        ? `S${bestDecreaseSpecies} ${bestDecrease}`
+        : "none";
+
+    return extinctions;
+  }
+
+  private pushRecentCounts(colonizations: number, deaths: number, extinctions: number): void {
+    this.recentColonizationsHistory[this.historyCursor] = colonizations;
+    this.recentDeathsHistory[this.historyCursor] = deaths;
+    this.recentExtinctionsHistory[this.historyCursor] = extinctions;
+  }
+
+  private pushHistorySamples(soilMoisture: Float32Array): void {
+    const baseOffset = this.historyCursor * this.biomass.length;
+    for (let index = 0; index < this.biomass.length; index += 1) {
+      const offset = baseOffset + index;
+      this.biomassHistory[offset] = this.biomass[index];
+      this.reserveHistory[offset] = this.reserveLevel[index];
+      this.moistureHistory[offset] = soilMoisture[index];
+      this.stressHistory[offset] = this.stressField[index];
+      this.reproductionHistory[offset] = this.reproductionReadinessField[index];
+    }
+    this.historyCursor = (this.historyCursor + 1) % this.historyLength;
+    this.historySamples = Math.min(this.historySamples + 1, this.historyLength);
+  }
+
+  private extractCellHistory(index: number) {
+    const biomass: number[] = [];
+    const reserve: number[] = [];
+    const moisture: number[] = [];
+    const stress: number[] = [];
+    const reproduction: number[] = [];
+    for (let sample = 0; sample < this.historySamples; sample += 1) {
+      const cursor = (this.historyCursor - this.historySamples + sample + this.historyLength) % this.historyLength;
+      const offset = cursor * this.biomass.length + index;
+      biomass.push(this.biomassHistory[offset]);
+      reserve.push(this.reserveHistory[offset]);
+      moisture.push(this.moistureHistory[offset]);
+      stress.push(this.stressHistory[offset]);
+      reproduction.push(this.reproductionHistory[offset]);
+    }
+    return { biomass, reserve, moisture, stress, reproduction };
+  }
+
+  private describeCellOutcome(
+    index: number,
+    suitability: number,
+    carryingCapacity: number,
+    dominantStress: string,
+  ): string {
+    const netDelta = this.biomassNetDeltaField[index];
+    if (netDelta < -0.004) {
+      const strongestLoss = this.describeStrongestLoss(index);
+      if (this.declinePressureField[index] > this.growthPotentialField[index] * 1.2) {
+        return `Biomass is falling because current biomass is above carrying capacity, so decline pressure is stronger than new growth.`;
+      }
+      if (this.reserveDeltaField[index] > 0.01) {
+        return `Biomass is shrinking because ${strongestLoss} outweighs growth, while reserves still rise through storage recovery and reserve gain.`;
+      }
+      return `Biomass is shrinking because ${strongestLoss} is larger than current growth input.`;
+    }
+
+    if (this.stressField[index] > 0.6) {
+      return `Declining mainly due to ${dominantStress} with low effective capacity.`;
+    }
+    if (this.reproductionReadinessField[index] < 0.18) {
+      return `Established but not spreading yet because reserves and readiness are still low.`;
+    }
+    if (this.activityLevel[index] < 0.28) {
+      return `Present but seasonally suppressed, conserving reserves instead of growing.`;
+    }
+    if (suitability > 0.58 && carryingCapacity > this.biomass[index]) {
+      return `Healthy and likely to expand if nearby gaps remain available.`;
+    }
+    return `Stable but constrained by ${dominantStress} and local carrying capacity.`;
+  }
+
+  private describeEmptyCell(index: number, bestScore: number, dominantStress: string): string {
+    if (this.recentDeathSpeciesId[index] !== SPECIES_NONE) {
+      return `Last occupant died mainly from ${this.deathReasonLabel(this.recentDeathReason[index])}; habitat is now ${bestScore >= this.settings.colonizationThreshold ? "recoverable" : "still too hostile"}.`;
+    }
+    if (bestScore < this.settings.colonizationThreshold) {
+      return `Currently unsuitable for colonization, limited mostly by ${dominantStress}.`;
+    }
+    if (this.neighborSupport[index] < 0.08) {
+      return `Suitable habitat, but nearby propagule support is still weak.`;
+    }
+    return `Potentially colonizable if neighboring species can supply enough spread pressure.`;
+  }
+
+  private getDominantStressLabel(
+    drought: number,
+    flood: number,
+    temperature: number,
+    slope: number,
+    maintenance: number,
+    dormancy: number,
+    standingWater: number,
+  ): string {
+    const entries: Array<[string, number]> = [
+      ["drought stress", drought],
+      ["flood stress", flood],
+      ["temperature stress", temperature],
+      ["slope stress", slope],
+      ["maintenance burden", maintenance],
+      ["seasonal suppression", dormancy],
+      ["standing water", standingWater],
+    ];
+    return entries.sort((left, right) => right[1] - left[1])[0]?.[0] ?? "mixed pressure";
+  }
+
+  private describeStrongestLoss(index: number): string {
+    const entries: Array<[string, number]> = [
+      ["capacity pressure", this.declineLossField[index]],
+      ["maintenance cost", this.maintenanceLossField[index]],
+      ["drought loss", this.droughtLossField[index]],
+      ["flood loss", this.floodLossField[index]],
+      ["slope loss", this.slopeLossField[index]],
+      ["standing water loss", this.standingWaterLossField[index]],
+    ];
+    const [label] = entries.sort((left, right) => right[1] - left[1])[0] ?? ["mixed losses", 0];
+    return label;
+  }
+
+  private describeReproductionBlockReason(
+    occupied: boolean,
+    readiness: number,
+    suitability: number,
+    reserveLevel: number,
+    reproductionThreshold: number,
+    neighborSupport: number,
+    activityLevel: number,
+  ): string {
+    if (!occupied) {
+      return "empty cell";
+    }
+    if (activityLevel < 0.16) {
+      return "seasonal activity is too low";
+    }
+    if (reserveLevel < reproductionThreshold) {
+      return "reserves are below the species reproduction threshold";
+    }
+    if (readiness < 0.2) {
+      return "reproduction readiness is still too low";
+    }
+    if (suitability < this.settings.colonizationThreshold) {
+      return "local habitat suitability is below colonization threshold";
+    }
+    if (neighborSupport < 0.05) {
+      return "nearby propagule support is weak";
+    }
+    return "conditions currently allow spread";
+  }
+
+  private resolveDeathReason(
+    declineLoss: number,
+    maintenanceLoss: number,
+    droughtLoss: number,
+    floodLoss: number,
+    temperatureStress: number,
+    slopeLoss: number,
+    standingWaterLoss: number,
+    dormancyPressure: number,
+  ): number {
+    const entries: Array<[number, number]> = [
+      [DEATH_REASON_CAPACITY, declineLoss],
+      [DEATH_REASON_MAINTENANCE, maintenanceLoss],
+      [DEATH_REASON_DROUGHT, droughtLoss],
+      [DEATH_REASON_FLOOD, floodLoss],
+      [DEATH_REASON_TEMPERATURE, temperatureStress * 0.02],
+      [DEATH_REASON_SLOPE, slopeLoss],
+      [DEATH_REASON_STANDING_WATER, standingWaterLoss],
+      [DEATH_REASON_SEASONAL, dormancyPressure * 0.02],
+    ];
+    const sorted = entries.sort((left, right) => right[1] - left[1]);
+    const strongest = sorted[0];
+    const second = sorted[1];
+    if (!strongest || strongest[1] <= 0.001) {
+      return DEATH_REASON_NONE;
+    }
+    if (second && second[1] > strongest[1] * 0.72) {
+      return DEATH_REASON_MULTI;
+    }
+    return strongest[0];
+  }
+
+  private recordRecentDeath(
+    index: number,
+    speciesId: number,
+    ageSeconds: number,
+    biomass: number,
+    deathReason: number,
+  ): void {
+    if (speciesId === SPECIES_NONE) {
+      return;
+    }
+    this.recentDeathSpeciesId[index] = speciesId;
+    this.recentDeathGeneration[index] = this.speciesCatalog[speciesId]?.generation ?? 0;
+    this.recentDeathAgeSeconds[index] = ageSeconds;
+    this.recentDeathBiomass[index] = biomass;
+    this.recentDeathReason[index] = deathReason;
+  }
+
+  private deathReasonLabel(reason: number): string | null {
+    switch (reason) {
+      case DEATH_REASON_CAPACITY:
+        return "carrying-capacity pressure";
+      case DEATH_REASON_DROUGHT:
+        return "drought";
+      case DEATH_REASON_FLOOD:
+        return "flooding";
+      case DEATH_REASON_TEMPERATURE:
+        return "temperature mismatch";
+      case DEATH_REASON_SLOPE:
+        return "slope stress";
+      case DEATH_REASON_STANDING_WATER:
+        return "standing water";
+      case DEATH_REASON_MAINTENANCE:
+        return "maintenance burden";
+      case DEATH_REASON_SEASONAL:
+        return "seasonal suppression";
+      case DEATH_REASON_MULTI:
+        return "multiple combined stresses";
+      default:
+        return null;
+    }
+  }
+
+  private sumRecentHistory(history: Uint16Array): number {
+    let sum = 0;
+    for (let index = 0; index < history.length; index += 1) {
+      sum += history[index];
+    }
+    return sum;
+  }
+
+  private sumVisibleField(field: Float32Array): number {
+    let sum = 0;
+    for (let index = 0; index < this.biomass.length; index += 1) {
+      if (this.biomass[index] < 0.05 || this.dominantSpeciesId[index] === SPECIES_NONE) {
+        continue;
+      }
+      sum += field[index];
+    }
+    return sum;
   }
 
   private resolveSpreadAbility(speciesId: number): number {

@@ -1,6 +1,7 @@
 import { ErosionModel } from "./Erosion";
 import { HydrologyModel } from "./Hydrology";
 import { MoistureModel } from "./Moisture";
+import type { PlantSelectionDiagnostics } from "./PlantDiagnostics";
 import type { PlantSpeciesDefinition } from "./PlantSpecies";
 import { RainfallModel } from "./Rainfall";
 import { SandboxModel, type SandboxToolMode } from "./Sandbox";
@@ -297,6 +298,51 @@ export class Simulation {
 
   public getVegetationDebugSummary(): VegetationDebugSummary {
     return this.vegetation.getDebugSummary();
+  }
+
+  /**
+   * Plant inspection is routed through the simulation so the UI can query one
+   * coherent object that already combines vegetation, terrain, water, moisture,
+   * temperature, and seasonal state.
+   */
+  public inspectPlantCell(cellX: number, cellY: number): PlantSelectionDiagnostics | null {
+    if (!this.terrain.grid.isInside(cellX, cellY)) {
+      return null;
+    }
+
+    return this.vegetation.inspectCell(
+      this.terrain,
+      cellX,
+      cellY,
+      this.soilMoisture,
+      this.temperature,
+      this.persistentWetness,
+      this.floodProne,
+      this.waterDepth,
+      {
+        phase: this.seasonState.phase,
+        rainfallMultiplier: this.seasonState.rainfallMultiplier,
+        temperatureOffset: this.seasonState.temperatureOffset,
+        evaporationMultiplier: this.seasonState.evaporationMultiplier,
+        seasonLabel: this.seasonState.seasonLabel,
+      },
+    );
+  }
+
+  public getPlantActivityField(): Float32Array {
+    return this.vegetation.getActivityField();
+  }
+
+  public getPlantReproductionReadinessField(): Float32Array {
+    return this.vegetation.getReproductionReadinessField();
+  }
+
+  public getPlantStressField(): Float32Array {
+    return this.vegetation.getStressField();
+  }
+
+  public getPlantSuitabilityField(): Float32Array {
+    return this.vegetation.getSuitabilityField();
   }
 
   public applySandboxTool(

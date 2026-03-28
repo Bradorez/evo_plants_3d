@@ -7,8 +7,8 @@
       content="width=device-width, initial-scale=1.0"
     />
     <title>Terrain Hydrology Simulator</title>
-    <script type="module" crossorigin src="/assets/index-qke5DY-5.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-CL4b2a1i.css">
+    <script type="module" crossorigin src="/assets/index-vUqx4IL1.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-Cw3jm8c_.css">
   </head>
   <body>
     <div id="app-shell">
@@ -135,6 +135,19 @@
           </label>
         </section>
 
+        <section class="control-group">
+          <label for="plantDiagnosticOverlayInput">Plant Diagnostic Overlay</label>
+          <select id="plantDiagnosticOverlayInput">
+            <option value="none">None</option>
+            <option value="biomass">Biomass</option>
+            <option value="reproduction">Reproduction Readiness</option>
+            <option value="activity">Activity</option>
+            <option value="stress">Stress</option>
+            <option value="suitability">Suitability</option>
+            <option value="species">Dominant Species</option>
+          </select>
+        </section>
+
         <section class="control-group stats-grid">
           <div>
             <span class="stat-label">Seed</span>
@@ -232,11 +245,206 @@
               <span class="stat-label">Avg Dormancy</span>
               <strong id="averagePlantDormancyValue">0.00</strong>
             </div>
+            <div>
+              <span class="stat-label">Recent Colonize</span>
+              <strong id="recentPlantColonizationsValue">0</strong>
+            </div>
+            <div>
+              <span class="stat-label">Recent Deaths</span>
+              <strong id="recentPlantDeathsValue">0</strong>
+            </div>
+            <div>
+              <span class="stat-label">Recent Extinctions</span>
+              <strong id="recentPlantExtinctionsValue">0</strong>
+            </div>
+            <div>
+              <span class="stat-label">Avg Repro Ready</span>
+              <strong id="averagePlantReproductionValue">0.00</strong>
+            </div>
           </div>
           <div class="debug-copy" id="plantPhenotypeValue">no established lineages</div>
           <div class="debug-copy" id="plantPressureValue">pressure mix unavailable</div>
           <div class="debug-copy" id="plantSeasonalActivityValue">seasonal activity unavailable</div>
           <div class="debug-copy" id="plantSeasonalSuppressionValue">seasonal suppression unavailable</div>
+          <div class="debug-copy" id="plantExpandingLineagesValue">top expanding lineage unavailable</div>
+          <div class="debug-copy" id="plantDecliningLineagesValue">top declining lineage unavailable</div>
+        </section>
+
+        <section class="control-group">
+          <div class="panel-subheader">
+            <span class="stat-label">Plant Inspector</span>
+            <strong id="plantInspectCellValue">none</strong>
+          </div>
+          <div class="debug-grid">
+            <div>
+              <span class="stat-label">Occupied</span>
+              <strong id="plantInspectOccupancyValue">no</strong>
+            </div>
+            <div>
+              <span class="stat-label">Lineage</span>
+              <strong id="plantInspectLineageValue">none</strong>
+            </div>
+            <div>
+              <span class="stat-label">Species ID</span>
+              <strong id="plantInspectSpeciesValue">-</strong>
+            </div>
+            <div>
+              <span class="stat-label">Parent ID</span>
+              <strong id="plantInspectParentValue">-</strong>
+            </div>
+            <div>
+              <span class="stat-label">Generation</span>
+              <strong id="plantInspectGenerationValue">-</strong>
+            </div>
+            <div>
+              <span class="stat-label">Age</span>
+              <strong id="plantInspectAgeValue">0.0 s</strong>
+            </div>
+            <div>
+              <span class="stat-label">Biomass</span>
+              <strong id="plantInspectBiomassValue">0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Health</span>
+              <strong id="plantInspectHealthValue">0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Reserve</span>
+              <strong id="plantInspectReserveValue">0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Activity</span>
+              <strong id="plantInspectActivityValue">0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Foliage</span>
+              <strong id="plantInspectFoliageValue">0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Maturity</span>
+              <strong id="plantInspectMaturityValue">0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Repro Ready</span>
+              <strong id="plantInspectReproductionValue">0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Biomass Delta</span>
+              <strong id="plantInspectNetDeltaValue">0.000</strong>
+            </div>
+            <div>
+              <span class="stat-label">Reserve Delta</span>
+              <strong id="plantInspectReserveDeltaValue">0.000</strong>
+            </div>
+            <div>
+              <span class="stat-label">Top Stress</span>
+              <strong id="plantInspectStressValue">mixed</strong>
+            </div>
+            <div>
+              <span class="stat-label">Activity Delta</span>
+              <strong id="plantInspectActivityDeltaValue">0.000</strong>
+            </div>
+            <div>
+              <span class="stat-label">Soil Moisture</span>
+              <strong id="plantInspectSoilMoistureValue">0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Surface Water</span>
+              <strong id="plantInspectSurfaceWaterValue">0.000</strong>
+            </div>
+            <div>
+              <span class="stat-label">Temperature</span>
+              <strong id="plantInspectTemperatureValue">0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Slope</span>
+              <strong id="plantInspectSlopeValue">0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Soil Depth</span>
+              <strong id="plantInspectSoilDepthValue">0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Coarse Surface</span>
+              <strong id="plantInspectCoarseValue">0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Bedrock Exposed</span>
+              <strong id="plantInspectBedrockValue">0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Season</span>
+              <strong id="plantInspectSeasonValue">-</strong>
+            </div>
+          </div>
+          <div class="debug-grid">
+            <div>
+              <span class="stat-label">Total Gains</span>
+              <strong id="plantInspectTotalGainsValue">0.000</strong>
+            </div>
+            <div>
+              <span class="stat-label">Total Losses</span>
+              <strong id="plantInspectTotalLossesValue">0.000</strong>
+            </div>
+            <div>
+              <span class="stat-label">Growth Gain</span>
+              <strong id="plantInspectGrowthGainValue">0.000</strong>
+            </div>
+            <div>
+              <span class="stat-label">Decline Loss</span>
+              <strong id="plantInspectDeclineLossValue">0.000</strong>
+            </div>
+            <div>
+              <span class="stat-label">Maint Loss</span>
+              <strong id="plantInspectMaintenanceLossValue">0.000</strong>
+            </div>
+            <div>
+              <span class="stat-label">Drought Loss</span>
+              <strong id="plantInspectDroughtLossValue">0.000</strong>
+            </div>
+            <div>
+              <span class="stat-label">Reserve Gain</span>
+              <strong id="plantInspectReserveGainValue">0.000</strong>
+            </div>
+            <div>
+              <span class="stat-label">Reserve Use</span>
+              <strong id="plantInspectReserveUseValue">0.000</strong>
+            </div>
+            <div>
+              <span class="stat-label">Opportunity</span>
+              <strong id="plantInspectOpportunityValue">0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Bad Season</span>
+              <strong id="plantInspectUnfavorableValue">0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Growth Potential</span>
+              <strong id="plantInspectGrowthPotentialValue">0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Capacity Pressure</span>
+              <strong id="plantInspectCapacityPressureValue">0.00</strong>
+            </div>
+          </div>
+          <div class="debug-copy" id="plantInspectExplanationValue">
+            Click terrain in View mode to inspect a plant cell or empty habitat.
+          </div>
+          <div class="debug-copy" id="plantInspectReproductionSummary">Reproduction status unavailable</div>
+          <div class="debug-copy" id="plantInspectBudgetSummary">Biomass driver summary unavailable</div>
+          <div class="debug-copy" id="plantInspectResourceSummary">Reserve driver summary unavailable</div>
+          <div class="debug-copy" id="plantInspectSeasonalSummary">Seasonal driver summary unavailable</div>
+          <div class="debug-copy" id="plantInspectDeclineSummary">Decline driver summary unavailable</div>
+          <div class="debug-copy" id="plantInspectFitnessSummary">Habitat fit summary unavailable</div>
+          <div class="debug-copy" id="plantInspectLastOccupantValue">recent death diagnostics unavailable</div>
+          <div class="debug-copy" id="plantInspectHistoryBiomass">biomass history unavailable</div>
+          <div class="debug-copy" id="plantInspectHistoryReserve">reserve history unavailable</div>
+          <div class="debug-copy" id="plantInspectHistoryMoisture">moisture history unavailable</div>
+          <div class="debug-copy" id="plantInspectHistoryStress">stress history unavailable</div>
+          <div class="debug-copy" id="plantInspectHistoryReproduction">reproduction history unavailable</div>
+          <div class="debug-copy" id="plantInspectTraitsEcology">ecology traits unavailable</div>
+          <div class="debug-copy" id="plantInspectTraitsMorphology">morphology traits unavailable</div>
+          <div class="debug-copy" id="plantInspectTraitsSeasonal">seasonal traits unavailable</div>
         </section>
       </aside>
     </div>

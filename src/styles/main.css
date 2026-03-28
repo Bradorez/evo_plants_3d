@@ -26,6 +26,7 @@ body {
 
 button,
 input,
+select,
 output {
   font: inherit;
 }
@@ -184,6 +185,15 @@ button:active {
 input[type="range"] {
   width: 100%;
   accent-color: #67b5cc;
+}
+
+select {
+  width: 100%;
+  border: 1px solid rgba(132, 189, 174, 0.18);
+  border-radius: 12px;
+  padding: 0.72rem 0.9rem;
+  background: rgba(20, 33, 39, 0.92);
+  color: #eef8f6;
 }
 
 output {

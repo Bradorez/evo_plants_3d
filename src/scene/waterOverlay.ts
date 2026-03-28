@@ -6,6 +6,7 @@ import {
   VertexData,
 } from "@babylonjs/core";
 import type { Scene } from "@babylonjs/core";
+import type { PlantDiagnosticOverlayMode } from "../sim/PlantDiagnostics";
 import type { TerrainData } from "../sim/Terrain";
 import { clamp, lerp } from "../utils/math";
 
@@ -15,6 +16,7 @@ export interface WaterOverlayViewOptions {
   showMoisture: boolean;
   showTemperature: boolean;
   showVegetation: boolean;
+  plantDiagnosticOverlay: PlantDiagnosticOverlayMode;
 }
 
 /**

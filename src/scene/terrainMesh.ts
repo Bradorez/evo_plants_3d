@@ -6,6 +6,8 @@ import {
   VertexData,
 } from "@babylonjs/core";
 import type { Scene } from "@babylonjs/core";
+import type { PlantDiagnosticOverlayMode } from "../sim/PlantDiagnostics";
+import { SPECIES_NONE } from "../sim/PlantSpecies";
 import type { TerrainData } from "../sim/Terrain";
 import {
   VEGETATION_PROFILE_DRYLAND,
@@ -360,6 +362,12 @@ export class TerrainMeshRenderer {
     vegetationBiomass: Float32Array,
     vegetationDensity: Uint8Array,
     vegetationProfile: Uint8Array,
+    vegetationSpeciesId: Uint16Array,
+    plantActivity: Float32Array,
+    plantReproductionReadiness: Float32Array,
+    plantStress: Float32Array,
+    plantSuitability: Float32Array,
+    plantDiagnosticOverlay: PlantDiagnosticOverlayMode,
     dtSeconds: number,
     showMoisture: boolean,
     showTemperature: boolean,
@@ -376,7 +384,12 @@ export class TerrainMeshRenderer {
       temperature.length !== this.topVertexCount ||
       vegetationBiomass.length !== this.topVertexCount ||
       vegetationDensity.length !== this.topVertexCount ||
-      vegetationProfile.length !== this.topVertexCount
+      vegetationProfile.length !== this.topVertexCount ||
+      vegetationSpeciesId.length !== this.topVertexCount ||
+      plantActivity.length !== this.topVertexCount ||
+      plantReproductionReadiness.length !== this.topVertexCount ||
+      plantStress.length !== this.topVertexCount ||
+      plantSuitability.length !== this.topVertexCount
     ) {
       return;
     }
@@ -472,7 +485,18 @@ export class TerrainMeshRenderer {
         ecologicalMoisture,
         floodMemory,
       );
-      const color = showVegetation
+      const color = plantDiagnosticOverlay !== "none"
+        ? this.getPlantDiagnosticVisualizationColor(
+            hydrologyColor,
+            plantDiagnosticOverlay,
+            vegetationBiomass[index],
+            plantActivity[index],
+            plantReproductionReadiness[index],
+            plantStress[index],
+            plantSuitability[index],
+            vegetationSpeciesId[index],
+          )
+        : showVegetation
         ? this.getVegetationVisualizationColor(
             hydrologyColor,
             vegetation,
@@ -1012,5 +1036,103 @@ export class TerrainMeshRenderer {
     const elevationLift = clamp(0.92 + elevation * 0.08, 0.9, 1);
     const shade = 1 - slope * 0.08;
     return [r * elevationLift * shade, g * elevationLift * shade, b * elevationLift * shade];
+  }
+
+  /**
+   * Plant diagnostics overlays are lightweight debug palettes layered directly
+   * onto the terrain. They reuse existing terrain colors as a dark base so the
+   * user can inspect plant performance without losing spatial context.
+   */
+  private getPlantDiagnosticVisualizationColor(
+    base: [number, number, number],
+    overlay: PlantDiagnosticOverlayMode,
+    biomass: number,
+    activity: number,
+    reproduction: number,
+    stress: number,
+    suitability: number,
+    speciesId: number,
+  ): [number, number, number] {
+    if (overlay === "species") {
+      if (speciesId === SPECIES_NONE || biomass < 0.02) {
+        return [base[0] * 0.7, base[1] * 0.7, base[2] * 0.7];
+      }
+
+      const hue = ((speciesId * 0.173) % 1 + 1) % 1;
+      return this.mixDebugColor(base, this.hsvToRgb(hue, 0.6, 0.88), clamp(0.34 + biomass * 0.4, 0.3, 0.78));
+    }
+
+    const value =
+      overlay === "biomass"
+        ? clamp(biomass, 0, 1)
+        : overlay === "activity"
+          ? clamp(activity, 0, 1)
+          : overlay === "reproduction"
+            ? clamp(reproduction, 0, 1)
+            : overlay === "stress"
+              ? clamp(stress, 0, 1)
+              : clamp(suitability, 0, 1);
+
+    const low =
+      overlay === "stress"
+        ? ([0.18, 0.34, 0.2] as const)
+        : ([0.16, 0.25, 0.44] as const);
+    const mid =
+      overlay === "stress"
+        ? ([0.56, 0.42, 0.12] as const)
+        : ([0.42, 0.52, 0.18] as const);
+    const high =
+      overlay === "stress"
+        ? ([0.76, 0.18, 0.14] as const)
+        : ([0.92, 0.84, 0.22] as const);
+    const mutedBase = [base[0] * 0.54, base[1] * 0.54, base[2] * 0.54] as [number, number, number];
+
+    let target: [number, number, number];
+    if (value < 0.5) {
+      const t = value / 0.5;
+      target = [lerp(low[0], mid[0], t), lerp(low[1], mid[1], t), lerp(low[2], mid[2], t)];
+    } else {
+      const t = (value - 0.5) / 0.5;
+      target = [lerp(mid[0], high[0], t), lerp(mid[1], high[1], t), lerp(mid[2], high[2], t)];
+    }
+
+    const blend = clamp(0.22 + value * 0.62, 0.22, 0.84);
+    return this.mixDebugColor(mutedBase, target, blend);
+  }
+
+  private mixDebugColor(
+    base: [number, number, number],
+    target: [number, number, number],
+    blend: number,
+  ): [number, number, number] {
+    return [
+      lerp(base[0], target[0], blend),
+      lerp(base[1], target[1], blend),
+      lerp(base[2], target[2], blend),
+    ];
+  }
+
+  private hsvToRgb(hue: number, saturation: number, value: number): [number, number, number] {
+    const h = ((hue % 1) + 1) % 1;
+    const i = Math.floor(h * 6);
+    const f = h * 6 - i;
+    const p = value * (1 - saturation);
+    const q = value * (1 - f * saturation);
+    const t = value * (1 - (1 - f) * saturation);
+
+    switch (i % 6) {
+      case 0:
+        return [value, t, p];
+      case 1:
+        return [q, value, p];
+      case 2:
+        return [p, value, t];
+      case 3:
+        return [p, q, value];
+      case 4:
+        return [t, p, value];
+      default:
+        return [value, p, q];
+    }
   }
 }
