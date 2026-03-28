@@ -77,6 +77,7 @@ export class SeasonModel {
     plantStressMultiplier: new Float32Array(),
   };
   private phaseOffsetField = new Float32Array();
+  private seasonalAmplitudeField = new Float32Array();
   private elapsedSeconds = 0;
   private state: SeasonState = {
     phase: 0,
@@ -90,8 +91,11 @@ export class SeasonModel {
     seasonLabel: "Early Spring",
   };
 
-  public rebuild(grid: Grid, seed: number): void {
+  public rebuild(grid: Grid, seed: number, seasonalAmplitudeField?: Float32Array): void {
     this.phaseOffsetField = new Float32Array(grid.cellCount);
+    this.seasonalAmplitudeField = seasonalAmplitudeField
+      ? new Float32Array(seasonalAmplitudeField)
+      : new Float32Array(grid.cellCount).fill(1);
     this.localFields = {
       phase: new Float32Array(grid.cellCount),
       rainfallMultiplier: new Float32Array(grid.cellCount),
@@ -148,7 +152,7 @@ export class SeasonModel {
     const yearLength = Math.max(1, this.settings.yearLengthSeconds);
     const year = Math.floor(this.elapsedSeconds / yearLength);
     const phase = (this.elapsedSeconds / yearLength) % 1;
-    const globalForcing = this.computeForcingForPhase(phase);
+    const globalForcing = this.computeForcingForPhase(phase, 1);
 
     let rainSum = 0;
     let tempSum = 0;
@@ -159,7 +163,10 @@ export class SeasonModel {
 
     for (let index = 0; index < this.phaseOffsetField.length; index += 1) {
       const localPhase = ((phase + this.phaseOffsetField[index]) % 1 + 1) % 1;
-      const forcing = this.computeForcingForPhase(localPhase);
+      const forcing = this.computeForcingForPhase(
+        localPhase,
+        this.seasonalAmplitudeField[index] || 1,
+      );
       this.localFields.phase[index] = localPhase;
       this.localFields.rainfallMultiplier[index] = forcing.rainfallMultiplier;
       this.localFields.temperatureOffset[index] = forcing.temperatureOffset;
@@ -197,42 +204,49 @@ export class SeasonModel {
     };
   }
 
-  private computeForcingForPhase(phase: number) {
+  private computeForcingForPhase(phase: number, amplitudeScale: number) {
     const wetSignal = this.sampleSeasonWave(phase + this.settings.rainfallPhaseOffset);
     const warmSignal = this.sampleSeasonWave(phase + this.settings.temperaturePhaseOffset);
     const wetAnomaly = wetSignal * 2 - 1;
     const warmAnomaly = warmSignal * 2 - 1;
     const dryAnomaly = -wetAnomaly;
     const mildTemperature = 1 - Math.abs(warmAnomaly);
+    const scaledWetAnomaly = wetAnomaly * amplitudeScale;
+    const scaledWarmAnomaly = warmAnomaly * amplitudeScale;
+    const scaledDryAnomaly = -scaledWetAnomaly;
 
     return {
       rainfallMultiplier: clamp(
-        1 + wetAnomaly * this.settings.rainfallSeasonAmplitude,
+        1 + scaledWetAnomaly * this.settings.rainfallSeasonAmplitude,
         0.18,
         2.25,
       ),
-      temperatureOffset: warmAnomaly * this.settings.temperatureSeasonAmplitude,
+      temperatureOffset: scaledWarmAnomaly * this.settings.temperatureSeasonAmplitude,
       evaporationMultiplier: clamp(
-        1 + warmAnomaly * this.settings.evaporationSeasonSensitivity + dryAnomaly * 0.12,
+        1 +
+          scaledWarmAnomaly * this.settings.evaporationSeasonSensitivity +
+          scaledDryAnomaly * 0.12,
         0.55,
         1.85,
       ),
       soilDryingMultiplier: clamp(
-        1 + warmAnomaly * this.settings.soilDryingSeasonSensitivity + dryAnomaly * 0.16,
+        1 +
+          scaledWarmAnomaly * this.settings.soilDryingSeasonSensitivity +
+          scaledDryAnomaly * 0.16,
         0.58,
         1.8,
       ),
       plantGrowthMultiplier: clamp(
         1 +
-          wetAnomaly * this.settings.plantGrowthSeasonSensitivity * 0.6 +
+          scaledWetAnomaly * this.settings.plantGrowthSeasonSensitivity * 0.6 +
           (mildTemperature - 0.5) * this.settings.plantGrowthSeasonSensitivity * 0.8,
         0.68,
         1.35,
       ),
       plantStressMultiplier: clamp(
         1 +
-          dryAnomaly * this.settings.plantStressSeasonSensitivity * 0.72 +
-          Math.max(0, warmAnomaly) * this.settings.plantStressSeasonSensitivity * 0.65,
+          scaledDryAnomaly * this.settings.plantStressSeasonSensitivity * 0.72 +
+          Math.max(0, scaledWarmAnomaly) * this.settings.plantStressSeasonSensitivity * 0.65,
         0.72,
         1.65,
       ),

@@ -73,6 +73,7 @@ export function createControls(
   const temperatureViewInput = queryElement<HTMLInputElement>("temperatureViewInput");
   const seasonViewInput = queryElement<HTMLInputElement>("seasonViewInput");
   const vegetationViewInput = queryElement<HTMLInputElement>("vegetationViewInput");
+  const climateOverlayInput = queryElement<HTMLSelectElement>("climateOverlayInput");
   const plantDiagnosticOverlayInput = queryElement<HTMLSelectElement>("plantDiagnosticOverlayInput");
   const seedValue = queryElement<HTMLElement>("seedValue");
   const timeValue = queryElement<HTMLElement>("timeValue");
@@ -232,6 +233,7 @@ export function createControls(
       showTemperature: temperatureViewInput.checked,
       showSeason: seasonViewInput.checked,
       showVegetation: vegetationViewInput.checked,
+      climateOverlay: climateOverlayInput.value as WaterOverlayViewOptions["climateOverlay"],
       plantDiagnosticOverlay: plantDiagnosticOverlayInput.value as WaterOverlayViewOptions["plantDiagnosticOverlay"],
     });
   };
@@ -246,6 +248,7 @@ export function createControls(
   temperatureViewInput.checked = initialState.viewOptions.showTemperature;
   seasonViewInput.checked = initialState.viewOptions.showSeason;
   vegetationViewInput.checked = initialState.viewOptions.showVegetation;
+  climateOverlayInput.value = initialState.viewOptions.climateOverlay;
   plantDiagnosticOverlayInput.value = initialState.viewOptions.plantDiagnosticOverlay;
   updateRunningText();
   updateRainValue();
@@ -329,6 +332,7 @@ export function createControls(
   temperatureViewInput.addEventListener("change", emitViewOptions);
   seasonViewInput.addEventListener("change", emitViewOptions);
   vegetationViewInput.addEventListener("change", emitViewOptions);
+  climateOverlayInput.addEventListener("change", emitViewOptions);
   plantDiagnosticOverlayInput.addEventListener("change", emitViewOptions);
 
   return {
@@ -587,6 +591,7 @@ export function createControls(
       showTemperature: temperatureViewInput.checked,
       showSeason: seasonViewInput.checked,
       showVegetation: vegetationViewInput.checked,
+      climateOverlay: climateOverlayInput.value as WaterOverlayViewOptions["climateOverlay"],
       plantDiagnosticOverlay: plantDiagnosticOverlayInput.value as WaterOverlayViewOptions["plantDiagnosticOverlay"],
     }),
   };

@@ -26,10 +26,10 @@ export class TemperatureModel {
   private readonly baseTemperature = new Float32Array();
   private readonly temperature = new Float32Array();
 
-  public constructor(terrain: TerrainData) {
+  public constructor(terrain: TerrainData, regionalTemperatureBias?: Float32Array) {
     this.baseTemperature = new Float32Array(terrain.grid.cellCount);
     this.temperature = new Float32Array(terrain.grid.cellCount);
-    this.rebuild(terrain);
+    this.rebuild(terrain, regionalTemperatureBias);
   }
 
   public getTemperature(): Float32Array {
@@ -49,7 +49,7 @@ export class TemperatureModel {
     }
   }
 
-  public rebuild(terrain: TerrainData): void {
+  public rebuild(terrain: TerrainData, regionalTemperatureBias?: Float32Array): void {
     const width = terrain.grid.width;
     const height = terrain.grid.height;
 
@@ -65,6 +65,7 @@ export class TemperatureModel {
           this.settings.baseTemperature +
           (latitudinalGradient - 0.75) * this.settings.latitudinalGradientStrength -
           elevation * this.settings.elevationCoolingStrength +
+          (regionalTemperatureBias?.[index] ?? 0) +
           (noise - 0.5) * this.settings.noiseStrength;
 
         this.baseTemperature[index] = clamp(temperature, 0, 1);

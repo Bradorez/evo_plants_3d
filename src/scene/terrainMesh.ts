@@ -9,6 +9,7 @@ import type { Scene } from "@babylonjs/core";
 import type { PlantDiagnosticOverlayMode } from "../sim/PlantDiagnostics";
 import { SPECIES_NONE } from "../sim/PlantSpecies";
 import type { TerrainData } from "../sim/Terrain";
+import type { ClimateOverlayMode } from "./waterOverlay";
 import {
   VEGETATION_PROFILE_DRYLAND,
   VEGETATION_PROFILE_MESIC,
@@ -368,6 +369,11 @@ export class TerrainMeshRenderer {
     plantStress: Float32Array,
     plantSuitability: Float32Array,
     localSeasonPhase: Float32Array,
+    climateMeanTemperature: Float32Array,
+    climateRainfallBaseline: Float32Array,
+    climateSeasonality: Float32Array,
+    climateEvaporationPressure: Float32Array,
+    climateOverlay: ClimateOverlayMode,
     plantDiagnosticOverlay: PlantDiagnosticOverlayMode,
     dtSeconds: number,
     showMoisture: boolean,
@@ -392,7 +398,11 @@ export class TerrainMeshRenderer {
       plantReproductionReadiness.length !== this.topVertexCount ||
       plantStress.length !== this.topVertexCount ||
       plantSuitability.length !== this.topVertexCount ||
-      localSeasonPhase.length !== this.topVertexCount
+      localSeasonPhase.length !== this.topVertexCount ||
+      climateMeanTemperature.length !== this.topVertexCount ||
+      climateRainfallBaseline.length !== this.topVertexCount ||
+      climateSeasonality.length !== this.topVertexCount ||
+      climateEvaporationPressure.length !== this.topVertexCount
     ) {
       return;
     }
@@ -516,6 +526,17 @@ export class TerrainMeshRenderer {
             heat,
             ecologicalMoisture,
             water,
+          )
+        : climateOverlay !== "none"
+          ? this.getClimateVisualizationColor(
+            hydrologyColor,
+            climateOverlay,
+            this.elevationField[index],
+            slope,
+            climateMeanTemperature[index],
+            climateRainfallBaseline[index],
+            climateSeasonality[index],
+            climateEvaporationPressure[index],
           )
         : showSeason
           ? this.getSeasonVisualizationColor(
@@ -1048,6 +1069,126 @@ export class TerrainMeshRenderer {
     const elevationLift = clamp(0.92 + elevation * 0.08, 0.9, 1);
     const shade = 1 - slope * 0.08;
     return [r * elevationLift * shade, g * elevationLift * shade, b * elevationLift * shade];
+  }
+
+  /**
+   * Climate overlays expose the slower regional backdrop rather than the
+   * instantaneous local weather response. These colors stay broad and blended
+   * so the user can inspect long-term climate structure without losing terrain
+   * context or confusing it with fine hydrology signals.
+   */
+  private getClimateVisualizationColor(
+    base: [number, number, number],
+    overlay: ClimateOverlayMode,
+    elevation: number,
+    slope: number,
+    meanTemperatureBias: number,
+    rainfallBaseline: number,
+    seasonality: number,
+    evaporationPressure: number,
+  ): [number, number, number] {
+    let target: [number, number, number];
+    let normalized = 0;
+
+    switch (overlay) {
+      case "mean_temperature": {
+        const cold = [0.18, 0.32, 0.5] as const;
+        const mild = [0.5, 0.48, 0.22] as const;
+        const hot = [0.8, 0.38, 0.16] as const;
+        normalized = clamp(inverseLerp(-0.18, 0.18, meanTemperatureBias), 0, 1);
+        if (normalized < 0.5) {
+          const t = normalized / 0.5;
+          target = [
+            lerp(cold[0], mild[0], t),
+            lerp(cold[1], mild[1], t),
+            lerp(cold[2], mild[2], t),
+          ];
+        } else {
+          const t = (normalized - 0.5) / 0.5;
+          target = [
+            lerp(mild[0], hot[0], t),
+            lerp(mild[1], hot[1], t),
+            lerp(mild[2], hot[2], t),
+          ];
+        }
+        break;
+      }
+      case "rainfall": {
+        const dry = [0.58, 0.36, 0.18] as const;
+        const moderate = [0.42, 0.5, 0.24] as const;
+        const wet = [0.12, 0.42, 0.5] as const;
+        normalized = clamp(inverseLerp(0.5, 1.7, rainfallBaseline), 0, 1);
+        if (normalized < 0.5) {
+          const t = normalized / 0.5;
+          target = [
+            lerp(dry[0], moderate[0], t),
+            lerp(dry[1], moderate[1], t),
+            lerp(dry[2], moderate[2], t),
+          ];
+        } else {
+          const t = (normalized - 0.5) / 0.5;
+          target = [
+            lerp(moderate[0], wet[0], t),
+            lerp(moderate[1], wet[1], t),
+            lerp(moderate[2], wet[2], t),
+          ];
+        }
+        break;
+      }
+      case "seasonality": {
+        const weak = [0.18, 0.46, 0.34] as const;
+        const moderate = [0.62, 0.56, 0.2] as const;
+        const strong = [0.78, 0.22, 0.16] as const;
+        normalized = clamp(inverseLerp(0.72, 1.48, seasonality), 0, 1);
+        if (normalized < 0.5) {
+          const t = normalized / 0.5;
+          target = [
+            lerp(weak[0], moderate[0], t),
+            lerp(weak[1], moderate[1], t),
+            lerp(weak[2], moderate[2], t),
+          ];
+        } else {
+          const t = (normalized - 0.5) / 0.5;
+          target = [
+            lerp(moderate[0], strong[0], t),
+            lerp(moderate[1], strong[1], t),
+            lerp(moderate[2], strong[2], t),
+          ];
+        }
+        break;
+      }
+      case "evaporation": {
+        const low = [0.16, 0.38, 0.48] as const;
+        const moderate = [0.48, 0.48, 0.22] as const;
+        const high = [0.82, 0.3, 0.14] as const;
+        normalized = clamp(inverseLerp(0.7, 1.55, evaporationPressure), 0, 1);
+        if (normalized < 0.5) {
+          const t = normalized / 0.5;
+          target = [
+            lerp(low[0], moderate[0], t),
+            lerp(low[1], moderate[1], t),
+            lerp(low[2], moderate[2], t),
+          ];
+        } else {
+          const t = (normalized - 0.5) / 0.5;
+          target = [
+            lerp(moderate[0], high[0], t),
+            lerp(moderate[1], high[1], t),
+            lerp(moderate[2], high[2], t),
+          ];
+        }
+        break;
+      }
+      case "none":
+      default:
+        return base;
+    }
+
+    const blend = clamp(0.42 + normalized * 0.28, 0.4, 0.78);
+    const mixed = this.mixDebugColor(base, target, blend);
+    const elevationLift = clamp(0.93 + elevation * 0.07, 0.9, 1);
+    const shade = 1 - slope * 0.08;
+    return [mixed[0] * elevationLift * shade, mixed[1] * elevationLift * shade, mixed[2] * elevationLift * shade];
   }
 
   /**

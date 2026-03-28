@@ -1,3 +1,4 @@
+import { RegionalClimateModel } from "./RegionalClimate";
 import { ErosionModel, type ErosionStabilityInputs } from "./Erosion";
 import { HydrologyModel } from "./Hydrology";
 import { MoistureModel } from "./Moisture";
@@ -11,6 +12,7 @@ import { TemperatureModel } from "./Temperature";
 import { recomputeTerrainBounds, TerrainData, TerrainGenerator } from "./Terrain";
 import { type VegetationDebugSummary, VegetationModel } from "./Vegetation";
 import { WaterBalanceModel } from "./WaterBalance";
+import { lerp } from "../utils/math";
 
 export interface SimulationSchedule {
   hydrologyStepSeconds: number;
@@ -96,9 +98,13 @@ export class Simulation {
   private soilStability: SoilStabilityModel;
   private sandbox: SandboxModel;
   private readonly seasonModel: SeasonModel;
+  private readonly regionalClimate: RegionalClimateModel;
   private temperatureModel: TemperatureModel;
   private vegetation: VegetationModel;
   private readonly waterBalance: WaterBalanceModel;
+  private localRainfallField: Float32Array;
+  private localEvaporationField: Float32Array;
+  private localSoilDryingField: Float32Array;
   private elapsedTimeSeconds = 0;
   private peakFlow = 0;
   private hydrologyAccumulator = 0;
@@ -132,6 +138,9 @@ export class Simulation {
       this.terrain.seed,
       options.initialRainIntensity ?? 0,
     );
+    this.localRainfallField = new Float32Array(this.terrain.grid.cellCount);
+    this.localEvaporationField = new Float32Array(this.terrain.grid.cellCount);
+    this.localSoilDryingField = new Float32Array(this.terrain.grid.cellCount);
 
     this.hydrology = new HydrologyModel(
       this.terrain.grid,
@@ -141,8 +150,14 @@ export class Simulation {
     );
     this.waterBalance = new WaterBalanceModel();
     this.sandbox = new SandboxModel(this.terrain.grid.cellCount);
+    this.regionalClimate = new RegionalClimateModel();
+    this.regionalClimate.rebuild(this.terrain.grid, this.terrain.seed);
     this.seasonModel = new SeasonModel();
-    this.seasonModel.rebuild(this.terrain.grid, this.terrain.seed);
+    this.seasonModel.rebuild(
+      this.terrain.grid,
+      this.terrain.seed,
+      this.regionalClimate.getSeasonalAmplitude(),
+    );
     this.erosion = new ErosionModel(
       this.terrain.grid,
       this.terrain.heights,
@@ -155,9 +170,13 @@ export class Simulation {
     );
     this.moisture = new MoistureModel(this.terrain.grid.cellCount);
     this.soilStability = new SoilStabilityModel(this.terrain.grid.cellCount);
-    this.temperatureModel = new TemperatureModel(this.terrain);
+    this.temperatureModel = new TemperatureModel(
+      this.terrain,
+      this.regionalClimate.getMeanTemperatureBias(),
+    );
     this.seasonState = this.seasonModel.getState();
-    this.temperatureModel.applySeasonalOffsets(this.seasonModel.getLocalFields().temperatureOffset);
+    this.refreshClimateForcingFields();
+    this.temperatureModel.applySeasonalOffsets(this.getLocalTemperatureOffsetField());
     this.vegetation = new VegetationModel(this.terrain.grid.cellCount, this.terrain.seed);
     this.temperature = this.temperatureModel.getTemperature();
     this.soilMoisture = this.moisture.getMoisture();
@@ -219,7 +238,8 @@ export class Simulation {
     // regeneration or the erase tool if you want to clear user-made springs.
     this.seasonModel.reset();
     this.seasonState = this.seasonModel.getState();
-    this.temperatureModel.applySeasonalOffsets(this.seasonModel.getLocalFields().temperatureOffset);
+    this.refreshClimateForcingFields();
+    this.temperatureModel.applySeasonalOffsets(this.getLocalTemperatureOffsetField());
     this.temperature = this.temperatureModel.getTemperature();
     this.refreshSoilStability(0);
     this.syncVegetationState();
@@ -233,6 +253,9 @@ export class Simulation {
     });
 
     this.waterDepth = new Float32Array(this.terrain.grid.cellCount);
+    this.localRainfallField = new Float32Array(this.terrain.grid.cellCount);
+    this.localEvaporationField = new Float32Array(this.terrain.grid.cellCount);
+    this.localSoilDryingField = new Float32Array(this.terrain.grid.cellCount);
     this.flowAccumulation.fill(0);
     this.elapsedTimeSeconds = 0;
     this.peakFlow = 0;
@@ -242,7 +265,12 @@ export class Simulation {
     this.vegetationAccumulator = 0;
     this.slowProcessAccumulator = 0;
     this.seasonModel.reset();
-    this.seasonModel.rebuild(this.terrain.grid, this.terrain.seed);
+    this.regionalClimate.rebuild(this.terrain.grid, this.terrain.seed);
+    this.seasonModel.rebuild(
+      this.terrain.grid,
+      this.terrain.seed,
+      this.regionalClimate.getSeasonalAmplitude(),
+    );
 
     const nextRainfall = new RainfallModel(
       this.terrain.grid,
@@ -270,9 +298,13 @@ export class Simulation {
     this.moisture = new MoistureModel(this.terrain.grid.cellCount);
     this.soilStability = new SoilStabilityModel(this.terrain.grid.cellCount);
     this.sandbox = new SandboxModel(this.terrain.grid.cellCount);
-    this.temperatureModel = new TemperatureModel(this.terrain);
+    this.temperatureModel = new TemperatureModel(
+      this.terrain,
+      this.regionalClimate.getMeanTemperatureBias(),
+    );
     this.seasonState = this.seasonModel.getState();
-    this.temperatureModel.applySeasonalOffsets(this.seasonModel.getLocalFields().temperatureOffset);
+    this.refreshClimateForcingFields();
+    this.temperatureModel.applySeasonalOffsets(this.getLocalTemperatureOffsetField());
     this.vegetation = new VegetationModel(this.terrain.grid.cellCount, this.terrain.seed);
     this.waterDepth = this.hydrology.getWaterDepth();
     this.erosion.setWaterDepthBuffer(this.waterDepth);
@@ -354,6 +386,22 @@ export class Simulation {
 
   public getLocalSeasonPhaseField(): Float32Array {
     return this.seasonModel.getLocalFields().phase;
+  }
+
+  public getClimateMeanTemperatureField(): Float32Array {
+    return this.regionalClimate.getMeanTemperatureBias();
+  }
+
+  public getClimateRainfallBaselineField(): Float32Array {
+    return this.regionalClimate.getRainfallBaseline();
+  }
+
+  public getClimateSeasonalityField(): Float32Array {
+    return this.regionalClimate.getSeasonalAmplitude();
+  }
+
+  public getClimateEvaporationPressureField(): Float32Array {
+    return this.regionalClimate.getEvaporationPressure();
   }
 
   public getPlantActivityField(): Float32Array {
@@ -462,7 +510,8 @@ export class Simulation {
   private advanceSeason(dtSeconds: number): void {
     this.seasonModel.step(dtSeconds);
     this.seasonState = this.seasonModel.getState();
-    this.temperatureModel.applySeasonalOffsets(this.seasonModel.getLocalFields().temperatureOffset);
+    this.refreshClimateForcingFields();
+    this.temperatureModel.applySeasonalOffsets(this.getLocalTemperatureOffsetField());
     this.temperature = this.temperatureModel.getTemperature();
   }
 
@@ -573,7 +622,7 @@ export class Simulation {
       this.rainfall,
       this.waterDepth,
       this.soilMoisture,
-      this.seasonModel.getLocalFields().rainfallMultiplier,
+      this.getLocalRainfallField(),
       stepSeconds,
     );
     const hydrologyResult = this.hydrology.step(stepSeconds);
@@ -582,7 +631,7 @@ export class Simulation {
       this.terrain,
       this.waterDepth,
       this.temperature,
-      this.seasonModel.getLocalFields().evaporationMultiplier,
+      this.getLocalEvaporationField(),
       stepSeconds,
     );
     this.erosion.setWaterDepthBuffer(this.waterDepth);
@@ -614,8 +663,8 @@ export class Simulation {
       this.hydrology.getFlowIntensity(),
       this.soilStability.getInfiltrationRecharge(),
       this.soilStability.getOrganicCover(),
-      this.seasonModel.getLocalFields().rainfallMultiplier,
-      this.seasonModel.getLocalFields().soilDryingMultiplier,
+      this.getLocalRainfallField(),
+      this.getLocalSoilDryingField(),
       stepSeconds,
     );
     this.soilStability.clearHydrologySignals();
@@ -704,6 +753,36 @@ export class Simulation {
       bankStability: this.soilStability.getBankStability(),
       detachmentThreshold: this.soilStability.getDetachmentThreshold(),
     };
+  }
+
+  private getLocalTemperatureOffsetField(): Float32Array {
+    return this.seasonModel.getLocalFields().temperatureOffset;
+  }
+
+  private getLocalRainfallField(): Float32Array {
+    return this.localRainfallField;
+  }
+
+  private getLocalEvaporationField(): Float32Array {
+    return this.localEvaporationField;
+  }
+
+  private getLocalSoilDryingField(): Float32Array {
+    return this.localSoilDryingField;
+  }
+
+  private refreshClimateForcingFields(): void {
+    const localSeason = this.seasonModel.getLocalFields();
+    const climateRain = this.regionalClimate.getRainfallBaseline();
+    const climateEvap = this.regionalClimate.getEvaporationPressure();
+
+    for (let index = 0; index < this.localRainfallField.length; index += 1) {
+      this.localRainfallField[index] = localSeason.rainfallMultiplier[index] * climateRain[index];
+      this.localEvaporationField[index] =
+        localSeason.evaporationMultiplier[index] * climateEvap[index];
+      this.localSoilDryingField[index] =
+        localSeason.soilDryingMultiplier[index] * lerp(0.85, climateEvap[index], 0.9);
+    }
   }
 }
 

@@ -10,6 +10,13 @@ import type { PlantDiagnosticOverlayMode } from "../sim/PlantDiagnostics";
 import type { TerrainData } from "../sim/Terrain";
 import { clamp, lerp } from "../utils/math";
 
+export type ClimateOverlayMode =
+  | "none"
+  | "mean_temperature"
+  | "rainfall"
+  | "seasonality"
+  | "evaporation";
+
 export interface WaterOverlayViewOptions {
   showRivers: boolean;
   showWaterDepth: boolean;
@@ -17,6 +24,7 @@ export interface WaterOverlayViewOptions {
   showTemperature: boolean;
   showSeason: boolean;
   showVegetation: boolean;
+  climateOverlay: ClimateOverlayMode;
   plantDiagnosticOverlay: PlantDiagnosticOverlayMode;
 }
 
