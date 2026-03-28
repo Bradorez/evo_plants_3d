@@ -373,6 +373,7 @@ export class TerrainMeshRenderer {
     climateRainfallBaseline: Float32Array,
     climateSeasonality: Float32Array,
     climateEvaporationPressure: Float32Array,
+    climateStability: Float32Array,
     climateOverlay: ClimateOverlayMode,
     plantDiagnosticOverlay: PlantDiagnosticOverlayMode,
     dtSeconds: number,
@@ -402,7 +403,8 @@ export class TerrainMeshRenderer {
       climateMeanTemperature.length !== this.topVertexCount ||
       climateRainfallBaseline.length !== this.topVertexCount ||
       climateSeasonality.length !== this.topVertexCount ||
-      climateEvaporationPressure.length !== this.topVertexCount
+      climateEvaporationPressure.length !== this.topVertexCount ||
+      climateStability.length !== this.topVertexCount
     ) {
       return;
     }
@@ -537,6 +539,7 @@ export class TerrainMeshRenderer {
             climateRainfallBaseline[index],
             climateSeasonality[index],
             climateEvaporationPressure[index],
+            climateStability[index],
           )
         : showSeason
           ? this.getSeasonVisualizationColor(
@@ -1086,6 +1089,7 @@ export class TerrainMeshRenderer {
     rainfallBaseline: number,
     seasonality: number,
     evaporationPressure: number,
+    climateStability: number,
   ): [number, number, number] {
     let target: [number, number, number];
     let normalized = 0;
@@ -1139,7 +1143,7 @@ export class TerrainMeshRenderer {
         const weak = [0.18, 0.46, 0.34] as const;
         const moderate = [0.62, 0.56, 0.2] as const;
         const strong = [0.78, 0.22, 0.16] as const;
-        normalized = clamp(inverseLerp(0.72, 1.48, seasonality), 0, 1);
+        normalized = clamp(inverseLerp(0.18, 1.48, seasonality), 0, 1);
         if (normalized < 0.5) {
           const t = normalized / 0.5;
           target = [
@@ -1175,6 +1179,28 @@ export class TerrainMeshRenderer {
             lerp(moderate[0], high[0], t),
             lerp(moderate[1], high[1], t),
             lerp(moderate[2], high[2], t),
+          ];
+        }
+        break;
+      }
+      case "stability": {
+        const unstable = [0.78, 0.26, 0.16] as const;
+        const moderate = [0.62, 0.56, 0.22] as const;
+        const stable = [0.14, 0.44, 0.38] as const;
+        normalized = clamp(climateStability, 0, 1);
+        if (normalized < 0.5) {
+          const t = normalized / 0.5;
+          target = [
+            lerp(unstable[0], moderate[0], t),
+            lerp(unstable[1], moderate[1], t),
+            lerp(unstable[2], moderate[2], t),
+          ];
+        } else {
+          const t = (normalized - 0.5) / 0.5;
+          target = [
+            lerp(moderate[0], stable[0], t),
+            lerp(moderate[1], stable[1], t),
+            lerp(moderate[2], stable[2], t),
           ];
         }
         break;

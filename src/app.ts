@@ -187,6 +187,7 @@ class TerrainHydrologyApp {
       this.simulation.getClimateRainfallBaselineField(),
       this.simulation.getClimateSeasonalityField(),
       this.simulation.getClimateEvaporationPressureField(),
+      this.simulation.getClimateStabilityField(),
       this.viewOptions.climateOverlay,
       this.viewOptions.plantDiagnosticOverlay,
       simulatedDeltaSeconds,

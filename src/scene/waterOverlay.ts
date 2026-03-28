@@ -15,7 +15,8 @@ export type ClimateOverlayMode =
   | "mean_temperature"
   | "rainfall"
   | "seasonality"
-  | "evaporation";
+  | "evaporation"
+  | "stability";
 
 export interface WaterOverlayViewOptions {
   showRivers: boolean;

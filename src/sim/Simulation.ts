@@ -157,6 +157,10 @@ export class Simulation {
       this.terrain.grid,
       this.terrain.seed,
       this.regionalClimate.getSeasonalAmplitude(),
+      this.regionalClimate.getClimateStability(),
+      this.regionalClimate.getSeasonalPhaseAnchor(),
+      this.regionalClimate.getSeasonalPhaseWindow(),
+      this.regionalClimate.getPhaseLockStrength(),
     );
     this.erosion = new ErosionModel(
       this.terrain.grid,
@@ -270,6 +274,10 @@ export class Simulation {
       this.terrain.grid,
       this.terrain.seed,
       this.regionalClimate.getSeasonalAmplitude(),
+      this.regionalClimate.getClimateStability(),
+      this.regionalClimate.getSeasonalPhaseAnchor(),
+      this.regionalClimate.getSeasonalPhaseWindow(),
+      this.regionalClimate.getPhaseLockStrength(),
     );
 
     const nextRainfall = new RainfallModel(
@@ -402,6 +410,10 @@ export class Simulation {
 
   public getClimateEvaporationPressureField(): Float32Array {
     return this.regionalClimate.getEvaporationPressure();
+  }
+
+  public getClimateStabilityField(): Float32Array {
+    return this.regionalClimate.getClimateStability();
   }
 
   public getPlantActivityField(): Float32Array {

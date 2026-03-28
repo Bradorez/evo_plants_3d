@@ -78,6 +78,10 @@ export class SeasonModel {
   };
   private phaseOffsetField = new Float32Array();
   private seasonalAmplitudeField = new Float32Array();
+  private climateStabilityField = new Float32Array();
+  private phaseAnchorField = new Float32Array();
+  private phaseWindowField = new Float32Array();
+  private phaseLockStrength = 0.82;
   private elapsedSeconds = 0;
   private state: SeasonState = {
     phase: 0,
@@ -91,11 +95,29 @@ export class SeasonModel {
     seasonLabel: "Early Spring",
   };
 
-  public rebuild(grid: Grid, seed: number, seasonalAmplitudeField?: Float32Array): void {
+  public rebuild(
+    grid: Grid,
+    seed: number,
+    seasonalAmplitudeField?: Float32Array,
+    climateStabilityField?: Float32Array,
+    phaseAnchorField?: Float32Array,
+    phaseWindowField?: Float32Array,
+    phaseLockStrength = 0.82,
+  ): void {
     this.phaseOffsetField = new Float32Array(grid.cellCount);
     this.seasonalAmplitudeField = seasonalAmplitudeField
       ? new Float32Array(seasonalAmplitudeField)
       : new Float32Array(grid.cellCount).fill(1);
+    this.climateStabilityField = climateStabilityField
+      ? new Float32Array(climateStabilityField)
+      : new Float32Array(grid.cellCount);
+    this.phaseAnchorField = phaseAnchorField
+      ? new Float32Array(phaseAnchorField)
+      : new Float32Array(grid.cellCount);
+    this.phaseWindowField = phaseWindowField
+      ? new Float32Array(phaseWindowField)
+      : new Float32Array(grid.cellCount).fill(0.125);
+    this.phaseLockStrength = phaseLockStrength;
     this.localFields = {
       phase: new Float32Array(grid.cellCount),
       rainfallMultiplier: new Float32Array(grid.cellCount),
@@ -162,12 +184,33 @@ export class SeasonModel {
     let stressSum = 0;
 
     for (let index = 0; index < this.phaseOffsetField.length; index += 1) {
-      const localPhase = ((phase + this.phaseOffsetField[index]) % 1 + 1) % 1;
-      const forcing = this.computeForcingForPhase(
+      const stability = clamp(this.climateStabilityField[index], 0, 1);
+      const dynamicPhase = ((phase + this.phaseOffsetField[index]) % 1 + 1) % 1;
+      const anchorPhase = this.phaseAnchorField[index] || dynamicPhase;
+      const motionScale = lerp(1, 0.01, Math.pow(stability, 0.7));
+      const semiFrozenPhase = wrapPhase(
+        anchorPhase + shortestPhaseDelta(anchorPhase, dynamicPhase) * motionScale,
+      );
+      const phaseLockBlend = clamp(
+        stability * this.phaseLockStrength,
+        0,
+        0.995,
+      );
+      const localPhase = blendPhase(
+        semiFrozenPhase,
+        anchorPhase,
+        phaseLockBlend,
+      );
+      const boundedPhase = clampPhaseToWindow(
         localPhase,
+        anchorPhase,
+        lerp(0.25, this.phaseWindowField[index] || 0.125, stability),
+      );
+      const forcing = this.computeForcingForPhase(
+        boundedPhase,
         this.seasonalAmplitudeField[index] || 1,
       );
-      this.localFields.phase[index] = localPhase;
+      this.localFields.phase[index] = boundedPhase;
       this.localFields.rainfallMultiplier[index] = forcing.rainfallMultiplier;
       this.localFields.temperatureOffset[index] = forcing.temperatureOffset;
       this.localFields.evaporationMultiplier[index] = forcing.evaporationMultiplier;
@@ -308,4 +351,34 @@ function describeSeason(phase: number): string {
   }
 
   return "Late Winter";
+}
+
+function blendPhase(fromPhase: number, toPhase: number, blend: number): number {
+  const wrappedFrom = wrapPhase(fromPhase);
+  const wrappedTo = wrapPhase(toPhase);
+  return wrapPhase(wrappedFrom + shortestPhaseDelta(wrappedFrom, wrappedTo) * clamp(blend, 0, 1));
+}
+
+function clampPhaseToWindow(phase: number, center: number, halfWindow: number): number {
+  const wrappedPhase = wrapPhase(phase);
+  const wrappedCenter = wrapPhase(center);
+  const delta = shortestPhaseDelta(wrappedCenter, wrappedPhase);
+  const clampedDelta = clamp(delta, -Math.max(halfWindow, 0), Math.max(halfWindow, 0));
+  return wrapPhase(wrappedCenter + clampedDelta);
+}
+
+function shortestPhaseDelta(fromPhase: number, toPhase: number): number {
+  let delta = wrapPhase(toPhase) - wrapPhase(fromPhase);
+
+  if (delta > 0.5) {
+    delta -= 1;
+  } else if (delta < -0.5) {
+    delta += 1;
+  }
+
+  return delta;
+}
+
+function wrapPhase(phase: number): number {
+  return ((phase % 1) + 1) % 1;
 }
