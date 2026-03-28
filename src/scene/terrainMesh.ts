@@ -289,7 +289,7 @@ export class TerrainMeshRenderer {
 
     mesh.material = this.material;
     mesh.receiveShadows = false;
-    mesh.isPickable = false;
+    mesh.isPickable = true;
     mesh.useVertexColors = true;
 
     const occluderNormals: number[] = [];
@@ -309,6 +309,10 @@ export class TerrainMeshRenderer {
     this.mesh = mesh;
     this.occluderMesh = occluderMesh;
     return mesh;
+  }
+
+  public getMesh(): Mesh | null {
+    return this.mesh;
   }
 
   /**

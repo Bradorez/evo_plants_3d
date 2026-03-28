@@ -3,6 +3,7 @@ import { HydrologyModel } from "./Hydrology";
 import { MoistureModel } from "./Moisture";
 import type { PlantSpeciesDefinition } from "./PlantSpecies";
 import { RainfallModel } from "./Rainfall";
+import { SandboxModel, type SandboxToolMode } from "./Sandbox";
 import { SeasonModel, type SeasonState } from "./Season";
 import { TemperatureModel } from "./Temperature";
 import { recomputeTerrainBounds, TerrainData, TerrainGenerator } from "./Terrain";
@@ -28,7 +29,6 @@ export interface SimulationOptions {
   cellSize?: number;
   initialSeed?: number;
   initialRainIntensity?: number;
-  vegetationInitializationDelaySeconds?: number;
   schedule?: Partial<SimulationSchedule>;
 }
 
@@ -38,6 +38,7 @@ export interface SimulationStats {
   totalWater: number;
   peakFlow: number;
   rainIntensity: number;
+  activeWaterSources: number;
   seasonLabel: string;
   seasonPhase: number;
   rainfallMultiplier: number;
@@ -90,6 +91,7 @@ export class Simulation {
   private hydrology: HydrologyModel;
   private erosion: ErosionModel;
   private moisture: MoistureModel;
+  private sandbox: SandboxModel;
   private readonly seasonModel: SeasonModel;
   private temperatureModel: TemperatureModel;
   private vegetation: VegetationModel;
@@ -103,14 +105,12 @@ export class Simulation {
   private slowProcessAccumulator = 0;
   private readonly resolution: number;
   private readonly cellSize: number;
-  private readonly vegetationInitializationDelaySeconds: number;
   private vegetationInitialized = false;
   private seasonState: SeasonState;
 
   public constructor(options: SimulationOptions = {}) {
     this.resolution = options.resolution ?? 128;
     this.cellSize = options.cellSize ?? 1;
-    this.vegetationInitializationDelaySeconds = options.vegetationInitializationDelaySeconds ?? 50;
     this.schedule = {
       ...DEFAULT_SCHEDULE,
       ...options.schedule,
@@ -127,7 +127,7 @@ export class Simulation {
     this.rainfall = new RainfallModel(
       this.terrain.grid,
       this.terrain.seed,
-      options.initialRainIntensity ?? 0.18,
+      options.initialRainIntensity ?? 0,
     );
 
     this.hydrology = new HydrologyModel(
@@ -137,6 +137,7 @@ export class Simulation {
       this.flowAccumulation,
     );
     this.waterBalance = new WaterBalanceModel();
+    this.sandbox = new SandboxModel(this.terrain.grid.cellCount);
     this.seasonModel = new SeasonModel();
     this.erosion = new ErosionModel(
       this.terrain.grid,
@@ -207,6 +208,8 @@ export class Simulation {
     this.vegetationAccumulator = 0;
     this.slowProcessAccumulator = 0;
     this.vegetationInitialized = false;
+    // Reset keeps persistent sandbox edits in the current world. Use terrain
+    // regeneration or the erase tool if you want to clear user-made springs.
     this.seasonModel.reset();
     this.seasonState = this.seasonModel.getState();
     this.temperatureModel.applySeasonalOffset(this.seasonState.temperatureOffset);
@@ -256,6 +259,7 @@ export class Simulation {
       this.hydrology.getFlowIntensity(),
     );
     this.moisture = new MoistureModel(this.terrain.grid.cellCount);
+    this.sandbox = new SandboxModel(this.terrain.grid.cellCount);
     this.temperatureModel = new TemperatureModel(this.terrain);
     this.seasonState = this.seasonModel.getState();
     this.temperatureModel.applySeasonalOffset(this.seasonState.temperatureOffset);
@@ -283,8 +287,67 @@ export class Simulation {
     return this.vegetation.getSpeciesCatalog();
   }
 
+  public initializeVegetationNow(): void {
+    if (this.vegetationInitialized) {
+      return;
+    }
+
+    this.initializeVegetation();
+  }
+
   public getVegetationDebugSummary(): VegetationDebugSummary {
     return this.vegetation.getDebugSummary();
+  }
+
+  public applySandboxTool(
+    mode: SandboxToolMode,
+    cellX: number,
+    cellY: number,
+    brushRadiusCells: number,
+    strength: number,
+  ): void {
+    if (!this.terrain.grid.isInside(cellX, cellY) || mode === "view") {
+      return;
+    }
+
+    if (mode === "add_rock") {
+      this.sandbox.addCoarseRock(this.terrain, cellX, cellY, brushRadiusCells, strength);
+      recomputeTerrainBounds(this.terrain);
+      return;
+    }
+
+    if (mode === "uplift") {
+      this.sandbox.upliftTerrain(this.terrain, cellX, cellY, brushRadiusCells, strength);
+      recomputeTerrainBounds(this.terrain);
+      return;
+    }
+
+    if (mode === "lower") {
+      this.sandbox.lowerTerrain(this.terrain, cellX, cellY, brushRadiusCells, strength);
+      recomputeTerrainBounds(this.terrain);
+      return;
+    }
+
+    if (mode === "planer") {
+      this.sandbox.planarizeTerrain(this.terrain, cellX, cellY, brushRadiusCells, strength);
+      recomputeTerrainBounds(this.terrain);
+      return;
+    }
+
+    if (mode === "uniniforment") {
+      this.sandbox.roughenTerrain(this.terrain, cellX, cellY, brushRadiusCells, strength);
+      recomputeTerrainBounds(this.terrain);
+      return;
+    }
+
+    if (mode === "water_source") {
+      this.sandbox.addWaterSource(this.terrain, cellX, cellY, brushRadiusCells, strength);
+      return;
+    }
+
+    if (mode === "erase_water_source") {
+      this.sandbox.eraseWaterSource(this.terrain, cellX, cellY, brushRadiusCells);
+    }
   }
 
   public getMaterialResistanceField(): Float32Array {
@@ -314,6 +377,7 @@ export class Simulation {
       totalWater,
       peakFlow,
       rainIntensity: this.rainfall.getIntensity(),
+      activeWaterSources: this.sandbox.getActiveSourceCount(),
       seasonLabel: this.seasonState.seasonLabel,
       seasonPhase: this.seasonState.phase,
       rainfallMultiplier: this.seasonState.rainfallMultiplier,
@@ -431,6 +495,7 @@ export class Simulation {
 
   private runHydrologyStep(stepSeconds: number): void {
     this.advanceSeason(stepSeconds);
+    this.sandbox.applyWaterSources(this.waterDepth, stepSeconds);
     this.rainfall.apply(this.waterDepth, stepSeconds, this.seasonState.rainfallMultiplier);
     const hydrologyResult = this.hydrology.step(stepSeconds);
     this.waterDepth = this.hydrology.getWaterDepth();
@@ -477,12 +542,6 @@ export class Simulation {
     this.persistentWetness = this.moisture.getPersistentWetness();
     this.floodProne = this.moisture.getFloodProne();
 
-    if (
-      !this.vegetationInitialized &&
-      this.elapsedTimeSeconds >= this.vegetationInitializationDelaySeconds
-    ) {
-      this.initializeVegetation();
-    }
   }
 
   private runVegetationStep(stepSeconds: number): void {

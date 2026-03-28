@@ -2,6 +2,8 @@ import { createScene, frameCameraOnTerrain } from "./scene/createScene";
 import { PlantRenderer } from "./scene/plantRenderer";
 import { TerrainMeshRenderer } from "./scene/terrainMesh";
 import { WaterOverlayRenderer, type WaterOverlayViewOptions } from "./scene/waterOverlay";
+import { Matrix, Vector3 } from "@babylonjs/core";
+import type { SandboxToolMode } from "./sim/Sandbox";
 import { Simulation } from "./sim/Simulation";
 import { createControls } from "./ui/controls";
 
@@ -18,10 +20,15 @@ class TerrainHydrologyApp {
   private readonly terrainMeshRenderer;
   private readonly waterOverlayRenderer;
   private readonly controls;
+  private readonly brushPreview;
 
   private isRunning = true;
   private simulationSpeed = 1;
   private statsAccumulator = 0;
+  private sandboxMode: SandboxToolMode = "view";
+  private sandboxBrushSize = 2;
+  private sandboxStrength = 1;
+  private hoveredBrushPoint: Vector3 | null = null;
   private viewOptions: WaterOverlayViewOptions = {
     showRivers: true,
     showWaterDepth: true,
@@ -31,6 +38,12 @@ class TerrainHydrologyApp {
   };
 
   public constructor(canvas: HTMLCanvasElement) {
+    const brushPreview = document.getElementById("brushPreview");
+    if (!(brushPreview instanceof HTMLDivElement)) {
+      throw new Error("Expected #brushPreview to be an HTMLDivElement.");
+    }
+    this.brushPreview = brushPreview;
+
     this.sceneBundle = createScene(canvas);
     this.plantRenderer = new PlantRenderer(this.sceneBundle.scene);
     this.terrainMeshRenderer = new TerrainMeshRenderer(this.sceneBundle.scene);
@@ -46,6 +59,10 @@ class TerrainHydrologyApp {
         onRegenerateTerrain: () => {
           this.regenerateTerrain();
         },
+        onPlantVegetation: () => {
+          this.simulation.initializeVegetationNow();
+          this.controls.setVegetationDebug(this.simulation.getVegetationDebugSummary());
+        },
         onRainIntensityChange: (value) => {
           this.simulation.setRainIntensity(value);
           this.controls.setStats(this.simulation.getStats());
@@ -56,16 +73,29 @@ class TerrainHydrologyApp {
         onViewOptionsChange: (value) => {
           this.viewOptions = value;
         },
+        onSandboxModeChange: (mode) => {
+          this.sandboxMode = mode;
+        },
+        onSandboxBrushSizeChange: (value) => {
+          this.sandboxBrushSize = value;
+        },
+        onSandboxStrengthChange: (value) => {
+          this.sandboxStrength = value;
+        },
       },
       {
         isRunning: this.isRunning,
         rainIntensity: this.simulation.getStats().rainIntensity,
         simulationSpeed: this.simulationSpeed,
         viewOptions: this.viewOptions,
+        sandboxMode: this.sandboxMode,
+        sandboxBrushSize: this.sandboxBrushSize,
+        sandboxStrength: this.sandboxStrength,
       },
     );
 
     this.rebuildTerrainVisuals();
+    this.attachSandboxInteraction(canvas);
     this.controls.setStats(this.simulation.getStats());
     this.controls.setVegetationDebug(this.simulation.getVegetationDebugSummary());
     this.sceneBundle.engine.runRenderLoop(() => {
@@ -136,6 +166,8 @@ class TerrainHydrologyApp {
       this.simulation.vegetationRevision,
     );
 
+    this.updateBrushPreview();
+
     this.sceneBundle.scene.render();
 
     this.statsAccumulator += realDeltaSeconds;
@@ -144,6 +176,122 @@ class TerrainHydrologyApp {
       this.controls.setVegetationDebug(this.simulation.getVegetationDebugSummary());
       this.statsAccumulator = 0;
     }
+  }
+
+  private attachSandboxInteraction(canvas: HTMLCanvasElement): void {
+    canvas.addEventListener("pointermove", () => {
+      this.hoveredBrushPoint = this.pickTerrainPoint();
+    });
+
+    canvas.addEventListener("pointerleave", () => {
+      this.hoveredBrushPoint = null;
+      this.brushPreview.style.opacity = "0";
+    });
+
+    canvas.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || this.sandboxMode === "view") {
+        return;
+      }
+
+      const pickedPoint = this.pickTerrainPoint();
+
+      if (!pickedPoint) {
+        return;
+      }
+
+      const cell = this.worldPointToCell(pickedPoint.x, pickedPoint.z);
+
+      if (!cell) {
+        return;
+      }
+
+      this.simulation.applySandboxTool(
+        this.sandboxMode,
+        cell.x,
+        cell.y,
+        this.sandboxBrushSize,
+        this.sandboxStrength,
+      );
+      this.controls.setStats(this.simulation.getStats());
+      this.hoveredBrushPoint = pickedPoint;
+    });
+  }
+
+  private pickTerrainPoint(): Vector3 | null {
+    const terrainMesh = this.terrainMeshRenderer.getMesh();
+
+    if (!terrainMesh) {
+      return null;
+    }
+
+    const pick = this.sceneBundle.scene.pick(
+      this.sceneBundle.scene.pointerX,
+      this.sceneBundle.scene.pointerY,
+      (mesh) => mesh === terrainMesh,
+    );
+
+    return pick?.hit && pick.pickedPoint ? pick.pickedPoint.clone() : null;
+  }
+
+  private updateBrushPreview(): void {
+    if (this.sandboxMode === "view" || !this.hoveredBrushPoint) {
+      this.brushPreview.style.opacity = "0";
+      return;
+    }
+
+    const engine = this.sceneBundle.engine;
+    const camera = this.sceneBundle.camera;
+    const canvasRect = engine.getRenderingCanvas()?.getBoundingClientRect();
+    if (!canvasRect) {
+      this.brushPreview.style.opacity = "0";
+      return;
+    }
+    const viewport = camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight());
+    const centerScreen = Vector3.Project(
+      this.hoveredBrushPoint,
+      Matrix.IdentityReadOnly,
+      this.sceneBundle.scene.getTransformMatrix(),
+      viewport,
+    );
+    const brushRadiusWorld = (this.sandboxBrushSize + 0.5) * this.simulation.terrain.cellSize;
+    const edgeWorld = this.hoveredBrushPoint.add(new Vector3(brushRadiusWorld, 0, 0));
+    const edgeScreen = Vector3.Project(
+      edgeWorld,
+      Matrix.IdentityReadOnly,
+      this.sceneBundle.scene.getTransformMatrix(),
+      viewport,
+    );
+    const widthScale = canvasRect.width / engine.getRenderWidth();
+    const heightScale = canvasRect.height / engine.getRenderHeight();
+    const centerX = canvasRect.left + centerScreen.x * widthScale;
+    const centerY = canvasRect.top + centerScreen.y * heightScale;
+    const radiusPx = Math.max(
+      8,
+      Math.hypot(
+        (edgeScreen.x - centerScreen.x) * widthScale,
+        (edgeScreen.y - centerScreen.y) * heightScale,
+      ),
+    );
+
+    this.brushPreview.style.left = `${centerX}px`;
+    this.brushPreview.style.top = `${centerY}px`;
+    this.brushPreview.style.width = `${radiusPx * 2}px`;
+    this.brushPreview.style.height = `${radiusPx * 2}px`;
+    this.brushPreview.style.opacity = "1";
+  }
+
+  private worldPointToCell(worldX: number, worldZ: number): { x: number; y: number } | null {
+    const terrain = this.simulation.terrain;
+    const halfWidth = (terrain.grid.width - 1) * terrain.cellSize * 0.5;
+    const halfHeight = (terrain.grid.height - 1) * terrain.cellSize * 0.5;
+    const x = Math.round((worldX + halfWidth) / terrain.cellSize);
+    const y = Math.round((worldZ + halfHeight) / terrain.cellSize);
+
+    if (!terrain.grid.isInside(x, y)) {
+      return null;
+    }
+
+    return { x, y };
   }
 }
 

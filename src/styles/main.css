@@ -36,6 +36,7 @@ output {
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
+  position: relative;
 }
 
 #renderCanvas {
@@ -46,6 +47,28 @@ output {
   background:
     radial-gradient(circle at 30% 20%, rgba(96, 118, 136, 0.18), transparent 32%),
     linear-gradient(180deg, #4a5866 0%, #687887 100%);
+}
+
+#brushPreview {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  border: 2px solid rgba(133, 214, 255, 0.92);
+  border-radius: 999px;
+  background: rgba(74, 153, 214, 0.14);
+  box-shadow:
+    0 0 0 1px rgba(13, 31, 46, 0.42) inset,
+    0 0 18px rgba(87, 174, 230, 0.18);
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, -50%);
+  transition:
+    opacity 100ms ease,
+    width 80ms ease,
+    height 80ms ease;
+  z-index: 2;
 }
 
 .control-panel {
@@ -103,6 +126,23 @@ output {
   gap: 0.55rem;
 }
 
+.button-row-single {
+  grid-template-columns: minmax(0, 1fr);
+  margin-top: 0.55rem;
+}
+
+.tool-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.range-stack {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.85rem;
+}
+
 button {
   border: 1px solid rgba(132, 189, 174, 0.18);
   border-radius: 12px;
@@ -125,6 +165,13 @@ button:hover {
 
 button:active {
   transform: translateY(0);
+}
+
+.tool-button-active {
+  border-color: rgba(126, 212, 189, 0.5);
+  background:
+    linear-gradient(180deg, rgba(76, 126, 114, 0.95), rgba(41, 79, 75, 0.95));
+  box-shadow: inset 0 0 0 1px rgba(174, 235, 217, 0.08);
 }
 
 .range-row {

@@ -7,12 +7,13 @@
       content="width=device-width, initial-scale=1.0"
     />
     <title>Terrain Hydrology Simulator</title>
-    <script type="module" crossorigin src="/assets/index-DfnjF55O.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BruAvlIN.css">
+    <script type="module" crossorigin src="/assets/index-tec3B5HC.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CL4b2a1i.css">
   </head>
   <body>
     <div id="app-shell">
       <canvas id="renderCanvas" aria-label="3D terrain hydrology simulator"></canvas>
+      <div id="brushPreview" aria-hidden="true"></div>
 
       <aside class="control-panel">
         <div class="panel-header">
@@ -30,6 +31,55 @@
             <button id="resetSimulationButton" type="button">Reset</button>
             <button id="regenerateTerrainButton" type="button">Regenerate</button>
           </div>
+          <div class="button-row button-row-single">
+            <button id="plantVegetationButton" type="button">Plant</button>
+          </div>
+        </section>
+
+        <section class="control-group">
+          <label>Sandbox Tools</label>
+          <div class="tool-grid">
+            <button id="sandboxViewButton" type="button" data-sandbox-mode="view">View</button>
+            <button id="sandboxRockButton" type="button" data-sandbox-mode="add_rock">Add Rock</button>
+            <button id="sandboxUpliftButton" type="button" data-sandbox-mode="uplift">Uplift</button>
+            <button id="sandboxLowerButton" type="button" data-sandbox-mode="lower">Lower</button>
+            <button id="sandboxPlanerButton" type="button" data-sandbox-mode="planer">Planer</button>
+            <button id="sandboxUniniformentButton" type="button" data-sandbox-mode="uniniforment">Uniniforment</button>
+            <button id="sandboxWaterSourceButton" type="button" data-sandbox-mode="water_source">Water Source</button>
+            <button id="sandboxEraseSourceButton" type="button" data-sandbox-mode="erase_water_source">Erase Source</button>
+          </div>
+          <div class="range-stack">
+            <label for="sandboxBrushInput">Brush Size</label>
+            <div class="range-row">
+              <input
+                id="sandboxBrushInput"
+                type="range"
+                min="1"
+                max="50"
+                step="1"
+                value="2"
+              />
+              <output id="sandboxBrushValue">2</output>
+            </div>
+            <label for="sandboxStrengthInput">Tool Strength</label>
+            <div class="range-row">
+              <input
+                id="sandboxStrengthInput"
+                type="range"
+                min="0.5"
+                max="12"
+                step="0.1"
+                value="1"
+              />
+              <output id="sandboxStrengthValue">1.0</output>
+            </div>
+          </div>
+          <div class="debug-copy">
+            Click the terrain while a tool is active. `Add Rock` raises coarse substrate,
+            `Uplift` raises terrain structure, `Lower` cuts terrain down, `Planer`
+            flattens the brushed surface, `Uniniforment` roughens it, `Water Source`
+            creates a persistent spring, and `Erase Source` removes springs.
+          </div>
         </section>
 
         <section class="control-group">
@@ -41,9 +91,9 @@
               min="0"
               max="1.2"
               step="0.01"
-              value="0.18"
+              value="0"
             />
-            <output id="rainIntensityValue">0.18</output>
+            <output id="rainIntensityValue">0.00</output>
           </div>
         </section>
 
@@ -54,7 +104,7 @@
               id="simulationSpeedInput"
               type="range"
               min="0.25"
-              max="4"
+              max="6"
               step="0.25"
               value="1"
             />
@@ -101,6 +151,10 @@
           <div>
             <span class="stat-label">Peak Flow</span>
             <strong id="peakFlowValue">0.000</strong>
+          </div>
+          <div>
+            <span class="stat-label">Water Sources</span>
+            <strong id="waterSourceCountValue">0</strong>
           </div>
           <div>
             <span class="stat-label">Season</span>

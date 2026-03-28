@@ -1,4 +1,5 @@
 import type { SimulationStats } from "../sim/Simulation";
+import type { SandboxToolMode } from "../sim/Sandbox";
 import type { VegetationDebugSummary } from "../sim/Vegetation";
 import type { WaterOverlayViewOptions } from "../scene/waterOverlay";
 
@@ -6,9 +7,13 @@ export interface ControlsCallbacks {
   onToggleRunning: (running: boolean) => void;
   onResetSimulation: () => void;
   onRegenerateTerrain: () => void;
+  onPlantVegetation: () => void;
   onRainIntensityChange: (value: number) => void;
   onSimulationSpeedChange: (value: number) => void;
   onViewOptionsChange: (value: WaterOverlayViewOptions) => void;
+  onSandboxModeChange: (mode: SandboxToolMode) => void;
+  onSandboxBrushSizeChange: (value: number) => void;
+  onSandboxStrengthChange: (value: number) => void;
 }
 
 export interface ControlsInitialState {
@@ -16,12 +21,18 @@ export interface ControlsInitialState {
   rainIntensity: number;
   simulationSpeed: number;
   viewOptions: WaterOverlayViewOptions;
+  sandboxMode: SandboxToolMode;
+  sandboxBrushSize: number;
+  sandboxStrength: number;
 }
 
 export interface ControlsApi {
   setRunning: (running: boolean) => void;
   setStats: (stats: SimulationStats) => void;
   setVegetationDebug: (summary: VegetationDebugSummary) => void;
+  getSandboxMode: () => SandboxToolMode;
+  getSandboxBrushSize: () => number;
+  getSandboxStrength: () => number;
   getViewOptions: () => WaterOverlayViewOptions;
 }
 
@@ -37,6 +48,19 @@ export function createControls(
   const toggleSimulationButton = queryElement<HTMLButtonElement>("toggleSimulationButton");
   const resetSimulationButton = queryElement<HTMLButtonElement>("resetSimulationButton");
   const regenerateTerrainButton = queryElement<HTMLButtonElement>("regenerateTerrainButton");
+  const plantVegetationButton = queryElement<HTMLButtonElement>("plantVegetationButton");
+  const sandboxViewButton = queryElement<HTMLButtonElement>("sandboxViewButton");
+  const sandboxRockButton = queryElement<HTMLButtonElement>("sandboxRockButton");
+  const sandboxUpliftButton = queryElement<HTMLButtonElement>("sandboxUpliftButton");
+  const sandboxLowerButton = queryElement<HTMLButtonElement>("sandboxLowerButton");
+  const sandboxPlanerButton = queryElement<HTMLButtonElement>("sandboxPlanerButton");
+  const sandboxUniniformentButton = queryElement<HTMLButtonElement>("sandboxUniniformentButton");
+  const sandboxWaterSourceButton = queryElement<HTMLButtonElement>("sandboxWaterSourceButton");
+  const sandboxEraseSourceButton = queryElement<HTMLButtonElement>("sandboxEraseSourceButton");
+  const sandboxBrushInput = queryElement<HTMLInputElement>("sandboxBrushInput");
+  const sandboxBrushValue = queryElement<HTMLOutputElement>("sandboxBrushValue");
+  const sandboxStrengthInput = queryElement<HTMLInputElement>("sandboxStrengthInput");
+  const sandboxStrengthValue = queryElement<HTMLOutputElement>("sandboxStrengthValue");
   const rainIntensityInput = queryElement<HTMLInputElement>("rainIntensityInput");
   const rainIntensityValue = queryElement<HTMLOutputElement>("rainIntensityValue");
   const simulationSpeedInput = queryElement<HTMLInputElement>("simulationSpeedInput");
@@ -50,6 +74,7 @@ export function createControls(
   const timeValue = queryElement<HTMLElement>("timeValue");
   const waterValue = queryElement<HTMLElement>("waterValue");
   const peakFlowValue = queryElement<HTMLElement>("peakFlowValue");
+  const waterSourceCountValue = queryElement<HTMLElement>("waterSourceCountValue");
   const seasonValue = queryElement<HTMLElement>("seasonValue");
   const seasonRainValue = queryElement<HTMLElement>("seasonRainValue");
   const seasonTempValue = queryElement<HTMLElement>("seasonTempValue");
@@ -69,6 +94,7 @@ export function createControls(
   const plantPressureValue = queryElement<HTMLElement>("plantPressureValue");
 
   let isRunning = initialState.isRunning;
+  let sandboxMode = initialState.sandboxMode;
 
   const updateRunningText = (): void => {
     toggleSimulationButton.textContent = isRunning ? "Pause" : "Start";
@@ -80,6 +106,31 @@ export function createControls(
 
   const updateSpeedValue = (): void => {
     simulationSpeedValue.textContent = `${Number(simulationSpeedInput.value).toFixed(2)}x`;
+  };
+
+  const updateSandboxBrushValue = (): void => {
+    sandboxBrushValue.textContent = Number(sandboxBrushInput.value).toFixed(0);
+  };
+
+  const updateSandboxStrengthValue = (): void => {
+    sandboxStrengthValue.textContent = Number(sandboxStrengthInput.value).toFixed(1);
+  };
+
+  const updateSandboxModeButtons = (): void => {
+    const buttons: Array<[HTMLButtonElement, SandboxToolMode]> = [
+      [sandboxViewButton, "view"],
+      [sandboxRockButton, "add_rock"],
+      [sandboxUpliftButton, "uplift"],
+      [sandboxLowerButton, "lower"],
+      [sandboxPlanerButton, "planer"],
+      [sandboxUniniformentButton, "uniniforment"],
+      [sandboxWaterSourceButton, "water_source"],
+      [sandboxEraseSourceButton, "erase_water_source"],
+    ];
+
+    for (const [button, mode] of buttons) {
+      button.classList.toggle("tool-button-active", sandboxMode === mode);
+    }
   };
 
   const emitViewOptions = (): void => {
@@ -94,6 +145,8 @@ export function createControls(
 
   rainIntensityInput.value = initialState.rainIntensity.toString();
   simulationSpeedInput.value = initialState.simulationSpeed.toString();
+  sandboxBrushInput.value = initialState.sandboxBrushSize.toString();
+  sandboxStrengthInput.value = initialState.sandboxStrength.toString();
   riverViewInput.checked = initialState.viewOptions.showRivers;
   waterDepthViewInput.checked = initialState.viewOptions.showWaterDepth;
   moistureViewInput.checked = initialState.viewOptions.showMoisture;
@@ -102,6 +155,9 @@ export function createControls(
   updateRunningText();
   updateRainValue();
   updateSpeedValue();
+  updateSandboxBrushValue();
+  updateSandboxStrengthValue();
+  updateSandboxModeButtons();
 
   toggleSimulationButton.addEventListener("click", () => {
     isRunning = !isRunning;
@@ -115,6 +171,51 @@ export function createControls(
 
   regenerateTerrainButton.addEventListener("click", () => {
     callbacks.onRegenerateTerrain();
+  });
+
+  plantVegetationButton.addEventListener("click", () => {
+    callbacks.onPlantVegetation();
+  });
+
+  const setSandboxMode = (mode: SandboxToolMode): void => {
+    sandboxMode = mode;
+    updateSandboxModeButtons();
+    callbacks.onSandboxModeChange(mode);
+  };
+
+  sandboxViewButton.addEventListener("click", () => {
+    setSandboxMode("view");
+  });
+  sandboxRockButton.addEventListener("click", () => {
+    setSandboxMode("add_rock");
+  });
+  sandboxUpliftButton.addEventListener("click", () => {
+    setSandboxMode("uplift");
+  });
+  sandboxLowerButton.addEventListener("click", () => {
+    setSandboxMode("lower");
+  });
+  sandboxPlanerButton.addEventListener("click", () => {
+    setSandboxMode("planer");
+  });
+  sandboxUniniformentButton.addEventListener("click", () => {
+    setSandboxMode("uniniforment");
+  });
+  sandboxWaterSourceButton.addEventListener("click", () => {
+    setSandboxMode("water_source");
+  });
+  sandboxEraseSourceButton.addEventListener("click", () => {
+    setSandboxMode("erase_water_source");
+  });
+
+  sandboxBrushInput.addEventListener("input", () => {
+    updateSandboxBrushValue();
+    callbacks.onSandboxBrushSizeChange(Number(sandboxBrushInput.value));
+  });
+
+  sandboxStrengthInput.addEventListener("input", () => {
+    updateSandboxStrengthValue();
+    callbacks.onSandboxStrengthChange(Number(sandboxStrengthInput.value));
   });
 
   rainIntensityInput.addEventListener("input", () => {
@@ -143,6 +244,7 @@ export function createControls(
       timeValue.textContent = `${stats.elapsedTimeSeconds.toFixed(1)} s`;
       waterValue.textContent = stats.totalWater.toFixed(3);
       peakFlowValue.textContent = stats.peakFlow.toFixed(3);
+      waterSourceCountValue.textContent = stats.activeWaterSources.toString();
       seasonValue.textContent = stats.seasonLabel;
       seasonRainValue.textContent = `${stats.rainfallMultiplier.toFixed(2)}x`;
       seasonTempValue.textContent = `${stats.temperatureOffset >= 0 ? "+" : ""}${stats.temperatureOffset.toFixed(2)}`;
@@ -174,6 +276,9 @@ export function createControls(
           ? `${pressureEntries.map(([label, count]) => `${label} ${count}`).join(", ")} | maint ${summary.averageMaintenanceCost.toFixed(2)}, comp ${summary.averageCompetitionStrength.toFixed(2)}, drought ${summary.averageDroughtBurden.toFixed(2)}, flood ${summary.averageFloodSuitability.toFixed(2)}, terrain ${summary.averageTerrainStability.toFixed(2)}, spread ${summary.averageSpreadDrive.toFixed(2)}`
           : `maint ${summary.averageMaintenanceCost.toFixed(2)}, comp ${summary.averageCompetitionStrength.toFixed(2)}, drought ${summary.averageDroughtBurden.toFixed(2)}, flood ${summary.averageFloodSuitability.toFixed(2)}, terrain ${summary.averageTerrainStability.toFixed(2)}, spread ${summary.averageSpreadDrive.toFixed(2)}`;
     },
+    getSandboxMode: () => sandboxMode,
+    getSandboxBrushSize: () => Number(sandboxBrushInput.value),
+    getSandboxStrength: () => Number(sandboxStrengthInput.value),
     getViewOptions: () => ({
       showRivers: riverViewInput.checked,
       showWaterDepth: waterDepthViewInput.checked,
