@@ -54,6 +54,15 @@ export interface VegetationSettings {
   morphologyTerrainStrength: number;
   morphologySpreadStrength: number;
   morphologyEstablishmentStrength: number;
+  establishmentDurationSeconds: number;
+  establishmentBiomassFloor: number;
+  establishmentTargetBiomass: number;
+  establishmentMaintenanceShield: number;
+  establishmentStressShield: number;
+  establishmentCompetitionShield: number;
+  establishmentGrowthBoost: number;
+  establishmentCapacityBoost: number;
+  establishmentReserveReliefBoost: number;
   seasonality: PlantSeasonalitySettings;
 }
 
@@ -99,6 +108,19 @@ const DEATH_REASON_STANDING_WATER = 6;
 const DEATH_REASON_MAINTENANCE = 7;
 const DEATH_REASON_SEASONAL = 8;
 const DEATH_REASON_MULTI = 9;
+const DEATH_REASON_ESTABLISHMENT = 10;
+
+interface PlantDevelopmentState {
+  progress: number;
+  stageLabel: string;
+  establishmentBuffer: number;
+  maintenanceShield: number;
+  stressShield: number;
+  competitionShield: number;
+  growthBoost: number;
+  capacityBonus: number;
+  reserveReliefBoost: number;
+}
 
 /**
  * VegetationModel now bridges ecological fields and heritable species data.
@@ -129,6 +151,15 @@ export class VegetationModel {
     morphologyTerrainStrength: 0.17,
     morphologySpreadStrength: 0.18,
     morphologyEstablishmentStrength: 0.16,
+    establishmentDurationSeconds: 22,
+    establishmentBiomassFloor: 0.018,
+    establishmentTargetBiomass: 0.12,
+    establishmentMaintenanceShield: 0.58,
+    establishmentStressShield: 0.52,
+    establishmentCompetitionShield: 0.62,
+    establishmentGrowthBoost: 0.55,
+    establishmentCapacityBoost: 0.12,
+    establishmentReserveReliefBoost: 0.8,
     seasonality: {
       activityResponseRate: 0.42,
       dormancyResponseRate: 0.38,
@@ -199,6 +230,11 @@ export class VegetationModel {
   private readonly targetFoliageField: Float32Array;
   private readonly growthPotentialField: Float32Array;
   private readonly declinePressureField: Float32Array;
+  private readonly effectiveCarryingCapacityField: Float32Array;
+  private readonly establishmentBufferField: Float32Array;
+  private readonly establishmentCapacityBonusField: Float32Array;
+  private readonly establishmentBiomassFloorField: Float32Array;
+  private readonly reserveReliefBoostField: Float32Array;
   private readonly competitionField: Float32Array;
   private readonly competitionAdvantageField: Float32Array;
   private readonly activityDeltaField: Float32Array;
@@ -289,6 +325,11 @@ export class VegetationModel {
     this.targetFoliageField = new Float32Array(cellCount);
     this.growthPotentialField = new Float32Array(cellCount);
     this.declinePressureField = new Float32Array(cellCount);
+    this.effectiveCarryingCapacityField = new Float32Array(cellCount);
+    this.establishmentBufferField = new Float32Array(cellCount);
+    this.establishmentCapacityBonusField = new Float32Array(cellCount);
+    this.establishmentBiomassFloorField = new Float32Array(cellCount);
+    this.reserveReliefBoostField = new Float32Array(cellCount);
     this.competitionField = new Float32Array(cellCount);
     this.competitionAdvantageField = new Float32Array(cellCount);
     this.activityDeltaField = new Float32Array(cellCount);
@@ -544,6 +585,11 @@ export class VegetationModel {
     this.targetFoliageField.fill(0);
     this.growthPotentialField.fill(0);
     this.declinePressureField.fill(0);
+    this.effectiveCarryingCapacityField.fill(0);
+    this.establishmentBufferField.fill(0);
+    this.establishmentCapacityBonusField.fill(0);
+    this.establishmentBiomassFloorField.fill(0);
+    this.reserveReliefBoostField.fill(0);
     this.competitionField.fill(0);
     this.competitionAdvantageField.fill(0);
     this.activityDeltaField.fill(0);
@@ -814,6 +860,14 @@ export class VegetationModel {
         const morphologyEffects = activeStressSpecies
           ? deriveMorphologyEcologyEffects(activeStressSpecies)
           : this.getNeutralMorphologyEffects();
+        const developmentState = activeStressSpecies
+          ? this.resolveDevelopmentState(
+              activeStressSpecies,
+              currentBiomass,
+              currentAgeSeconds,
+              currentReserve,
+            )
+          : this.getNeutralDevelopmentState();
         const competitionAdvantage =
           habitat.fertileMoisture *
           habitat.stability *
@@ -822,10 +876,14 @@ export class VegetationModel {
         const competition =
           support *
           this.settings.carryingCapacityStrength *
-          (1.02 - competitionAdvantage * 0.34);
+          (1.02 - competitionAdvantage * 0.34) *
+          (1 - developmentState.establishmentBuffer * this.settings.establishmentCompetitionShield);
         const morphologyPerformance = activeStressSpecies
           ? evaluateMorphologyHabitatFit(activeStressSpecies, habitat)
           : 0.5;
+        const establishmentCapacityBonus =
+          developmentState.capacityBonus *
+          (0.4 + targetSuitability * 0.38 + wetAdjacency * 0.12 + support * 0.1);
         const carryingCapacity = clamp(
           targetSuitability *
             (0.78 + morphologyPerformance * 0.14 + competitionAdvantage * 0.12) *
@@ -834,7 +892,8 @@ export class VegetationModel {
               0.86 +
               wetAdjacency * 0.08 +
               morphologyEffects.floodSuitability * habitat.channelInfluence * 0.06
-            ),
+            ) +
+            establishmentCapacityBonus,
           0,
           1,
         );
@@ -880,6 +939,7 @@ export class VegetationModel {
         let diagnosticReproductionReadiness = seasonalResponse.reproductionReadiness;
         let growthPotential = 0;
         let declinePressure = 0;
+        let effectiveCarryingCapacity = carryingCapacity;
         let growthGain = 0;
         let colonizationGain = 0;
         let declineLoss = 0;
@@ -890,10 +950,18 @@ export class VegetationModel {
         let standingWaterLoss = 0;
         let storageRelief = 0;
         let growthSuppression = 0;
+        let establishmentBiomassFloor = 0;
 
         if (currentSpeciesId !== SPECIES_NONE && targetSpeciesId !== SPECIES_NONE) {
-          growthPotential = clamp(carryingCapacity - currentBiomass, 0, 1);
-          declinePressure = clamp(currentBiomass - carryingCapacity, 0, 1);
+          effectiveCarryingCapacity = clamp(
+            carryingCapacity + developmentState.establishmentBuffer * 0.025,
+            0,
+            1,
+          );
+          growthPotential = clamp(effectiveCarryingCapacity - currentBiomass, 0, 1);
+          declinePressure =
+            clamp(currentBiomass - effectiveCarryingCapacity, 0, 1) *
+            (1 - developmentState.establishmentBuffer * 0.72);
           standingWaterStress = Math.max(
             0,
             standingWater - this.resolveStandingWaterTolerance(this.dominantSpeciesId[index]),
@@ -902,7 +970,8 @@ export class VegetationModel {
             morphologyEffects.maintenanceCost *
             this.settings.morphologyMaintenanceStrength *
             (0.42 + habitat.dryness * 0.34 + habitat.slope * 0.16 + standingWater * 0.08) *
-            seasonalResponse.maintenanceScale;
+            seasonalResponse.maintenanceScale *
+            developmentState.maintenanceShield;
           diagnosticSpreadScale = seasonalResponse.spreadScale;
           diagnosticSpreadDrive = morphologyEffects.spreadDrive;
           growthSuppression = clamp(
@@ -917,6 +986,7 @@ export class VegetationModel {
             (0.74 + morphologyPerformance * 0.16 + competitionAdvantage * 0.1) *
             (1 - growthSuppression) *
             seasonalResponse.growthScale *
+            developmentState.growthBoost *
             growthMultiplier *
             this.resolveVigor(activeStressSpeciesId) *
             dtSeconds;
@@ -927,21 +997,33 @@ export class VegetationModel {
             this.settings.droughtStressStrength *
             stressMultiplier *
             seasonalResponse.stressScale *
+            developmentState.stressShield *
             dtSeconds;
           floodLoss =
             floodStress *
             this.settings.floodStressStrength *
             stressMultiplier *
             lerp(seasonalResponse.stressScale, 1, 0.35) *
+            developmentState.stressShield *
             dtSeconds;
           slopeLoss =
             slopeStress *
             this.settings.slopeStressStrength *
             lerp(stressMultiplier, 1, 0.5) *
             lerp(seasonalResponse.stressScale, 1, 0.45) *
+            developmentState.stressShield *
             dtSeconds;
-          standingWaterLoss = standingWaterStress * 0.16 * seasonalResponse.stressScale * dtSeconds;
-          storageRelief = seasonalResponse.storageSupport * 0.12 * dtSeconds;
+          standingWaterLoss =
+            standingWaterStress *
+            0.16 *
+            seasonalResponse.stressScale *
+            developmentState.stressShield *
+            dtSeconds;
+          storageRelief =
+            seasonalResponse.storageSupport *
+            0.12 *
+            developmentState.reserveReliefBoost *
+            dtSeconds;
 
           nextBiomass += growthGain;
           nextBiomass -=
@@ -952,6 +1034,10 @@ export class VegetationModel {
             slopeLoss +
             standingWaterLoss -
             storageRelief;
+
+          if (developmentState.establishmentBuffer > 0.02) {
+            nextBiomass = Math.max(nextBiomass, currentBiomass * 0.78);
+          }
 
           nextActivity = seasonalResponse.activityLevel;
           nextReserve = seasonalResponse.reserveLevel;
@@ -1006,10 +1092,17 @@ export class VegetationModel {
               growthMultiplier *
               (0.58 + vigor * 0.42) *
               dtSeconds;
-
-            nextBiomass = colonization;
-            colonizationGain = colonization;
-            if (nextBiomass > 0.002) {
+            establishmentBiomassFloor = this.resolveColonizationBiomassFloor(
+              colonizer.score,
+              support,
+              spreadAbility,
+              vigor,
+              colonizerEffects,
+              colonizerSeasonalResponse,
+            );
+            nextBiomass = Math.max(colonization, establishmentBiomassFloor);
+            colonizationGain = nextBiomass;
+            if (nextBiomass >= 0.01) {
               this.assignSpeciesToCell(index, colonizerSpeciesId);
               colonizationsThisStep += 1;
               nextActivity = colonizerSeasonalResponse.activityLevel;
@@ -1035,6 +1128,8 @@ export class VegetationModel {
             slopeLoss,
             standingWaterLoss,
             nextDormancyPressure,
+            currentAgeSeconds,
+            developmentState.establishmentBuffer,
           );
           this.recordRecentDeath(
             index,
@@ -1102,6 +1197,11 @@ export class VegetationModel {
         this.targetFoliageField[index] = seasonalResponse.targetFoliage;
         this.growthPotentialField[index] = growthPotential;
         this.declinePressureField[index] = declinePressure;
+        this.effectiveCarryingCapacityField[index] = effectiveCarryingCapacity;
+        this.establishmentBufferField[index] = developmentState.establishmentBuffer;
+        this.establishmentCapacityBonusField[index] = establishmentCapacityBonus;
+        this.establishmentBiomassFloorField[index] = establishmentBiomassFloor;
+        this.reserveReliefBoostField[index] = developmentState.reserveReliefBoost;
         this.competitionField[index] = competition;
         this.competitionAdvantageField[index] = competitionAdvantage;
         this.activityDeltaField[index] = nextActivity - currentActivity;
@@ -1189,6 +1289,7 @@ export class VegetationModel {
     const species = occupied ? this.speciesCatalog[speciesId] ?? null : null;
     const suitability = occupied ? this.suitabilityField[index] : bestCandidate.score;
     const carryingCapacity = occupied ? this.carryingCapacityField[index] : 0;
+    const effectiveCarryingCapacity = occupied ? this.effectiveCarryingCapacityField[index] : 0;
     const blockedReason = this.describeReproductionBlockReason(
       occupied,
       this.reproductionReadinessField[index],
@@ -1201,6 +1302,10 @@ export class VegetationModel {
     const maturityLevel = species
       ? clamp(this.biomass[index] / Math.max(species.seasonal.reproductionThreshold, 0.08), 0, 1)
       : 0;
+    const developmentProgress = occupied ? 1 - this.establishmentBufferField[index] : 0;
+    const developmentStage = occupied
+      ? this.describeDevelopmentStage(this.establishmentBufferField[index])
+      : "empty";
     const dominantStress = this.getDominantStressLabel(
       this.droughtStressField[index],
       this.floodStressField[index],
@@ -1211,7 +1316,7 @@ export class VegetationModel {
       this.standingWaterStressField[index],
     );
     const explanation = occupied
-      ? this.describeCellOutcome(index, suitability, carryingCapacity, dominantStress)
+      ? this.describeCellOutcome(index, suitability, effectiveCarryingCapacity, dominantStress)
       : this.describeEmptyCell(index, bestCandidate.score, dominantStress);
     const history = this.extractCellHistory(index);
     const ecologyTraits = species
@@ -1273,8 +1378,10 @@ export class VegetationModel {
       currentState: {
         ageSeconds: this.ageSeconds[index],
         biomass: this.biomass[index],
-        health: clamp(carryingCapacity * (1 - this.stressField[index] * 0.72), 0, 1),
+        health: clamp(effectiveCarryingCapacity * (1 - this.stressField[index] * 0.72), 0, 1),
         vigor: species?.ecology.vigor ?? 0,
+        developmentStage,
+        developmentProgress,
         reserveLevel: this.reserveLevel[index],
         activityLevel: this.activityLevel[index],
         dormancyPressure: this.dormancyPressure[index],
@@ -1312,7 +1419,9 @@ export class VegetationModel {
         seasonalSuppression: this.dormancyPressure[index],
         slopeStress: this.slopeStressField[index],
         standingWaterStress: this.standingWaterStressField[index],
-        carryingCapacityPressure: clamp(this.biomass[index] - carryingCapacity, 0, 1),
+        carryingCapacityPressure: clamp(this.biomass[index] - effectiveCarryingCapacity, 0, 1),
+        survivalMargin: effectiveCarryingCapacity - this.biomass[index],
+        establishmentBuffer: this.establishmentBufferField[index],
         totalStress: this.stressField[index],
         dominantStress,
       },
@@ -1353,15 +1462,20 @@ export class VegetationModel {
         targetFoliage: this.targetFoliageField[index],
         growthPotential: this.growthPotentialField[index],
         declinePressure: this.declinePressureField[index],
+        effectiveCarryingCapacity,
+        establishmentCapacityBonus: this.establishmentCapacityBonusField[index],
+        establishmentBiomassFloor: this.establishmentBiomassFloorField[index],
         competitionPressure: this.competitionField[index],
         competitionAdvantage: this.competitionAdvantageField[index],
+        reserveReliefBoost: this.reserveReliefBoostField[index],
         growthBlockReason: this.describeGrowthBlockReason(
-          carryingCapacity,
+          this.effectiveCarryingCapacityField[index],
           this.biomass[index],
           this.growthPotentialField[index],
           this.activityLevel[index],
           this.growthScaleField[index],
           suitability,
+          this.establishmentBufferField[index],
         ),
       },
       lastOccupant:
@@ -1407,7 +1521,7 @@ export class VegetationModel {
         erosivePower: erosivePower[index],
       },
       fitness: {
-        carryingCapacity,
+        carryingCapacity: effectiveCarryingCapacity,
         suitability,
         positive: {
           biomassSupport: clamp(carryingCapacity, 0, 1),
@@ -1922,6 +2036,112 @@ export class VegetationModel {
     };
   }
 
+  /**
+   * Development state keeps early-life survival generic and continuous.
+   * Seedlings and fresh colonizers should not pay full mature-plant costs on
+   * the first few ecology ticks, otherwise the system collapses before
+   * selection can act. This stage signal fades out automatically with biomass,
+   * reserves, and age.
+   */
+  private resolveDevelopmentState(
+    species: PlantSpeciesDefinition,
+    biomass: number,
+    ageSeconds: number,
+    reserveLevel: number,
+  ): PlantDevelopmentState {
+    const biomassProgress = clamp(
+      biomass / Math.max(this.settings.establishmentTargetBiomass, 0.02),
+      0,
+      1,
+    );
+    const ageProgress = clamp(
+      ageSeconds / Math.max(this.settings.establishmentDurationSeconds, 1),
+      0,
+      1,
+    );
+    const reserveProgress = clamp(
+      reserveLevel / Math.max(species.seasonal.resourceStorageCapacity * 0.36 + 0.06, 0.06),
+      0,
+      1,
+    );
+    const progress = clamp(
+      biomassProgress * 0.56 + ageProgress * 0.3 + reserveProgress * 0.14,
+      0,
+      1,
+    );
+    const establishmentBuffer = 1 - progress;
+
+    return {
+      progress,
+      stageLabel: this.describeDevelopmentStage(establishmentBuffer),
+      establishmentBuffer,
+      maintenanceShield:
+        1 - establishmentBuffer * this.settings.establishmentMaintenanceShield,
+      stressShield: 1 - establishmentBuffer * this.settings.establishmentStressShield,
+      competitionShield:
+        1 - establishmentBuffer * this.settings.establishmentCompetitionShield,
+      growthBoost: 1 + establishmentBuffer * this.settings.establishmentGrowthBoost,
+      capacityBonus: establishmentBuffer * this.settings.establishmentCapacityBoost,
+      reserveReliefBoost:
+        1 + establishmentBuffer * this.settings.establishmentReserveReliefBoost,
+    };
+  }
+
+  private getNeutralDevelopmentState(): PlantDevelopmentState {
+    return {
+      progress: 1,
+      stageLabel: "mature",
+      establishmentBuffer: 0,
+      maintenanceShield: 1,
+      stressShield: 1,
+      competitionShield: 1,
+      growthBoost: 1,
+      capacityBonus: 0,
+      reserveReliefBoost: 1,
+    };
+  }
+
+  private describeDevelopmentStage(establishmentBuffer: number): string {
+    if (establishmentBuffer > 0.66) {
+      return "establishing";
+    }
+    if (establishmentBuffer > 0.26) {
+      return "juvenile";
+    }
+    return "mature";
+  }
+
+  /**
+   * Colonizers need an explicit establishment floor; otherwise spread can
+   * successfully "happen" in the math while still producing biomass below the
+   * live-cell cutoff, causing immediate invisible deaths.
+   */
+  private resolveColonizationBiomassFloor(
+    suitability: number,
+    neighborSupport: number,
+    spreadAbility: number,
+    vigor: number,
+    morphologyEffects: PlantMorphologyEcologyEffects,
+    seasonalResponse: ReturnType<typeof computePlantSeasonalResponse>,
+  ): number {
+    const establishmentSupport = clamp(
+      suitability * 0.42 +
+        neighborSupport * 0.2 +
+        spreadAbility * 0.12 +
+        vigor * 0.12 +
+        seasonalResponse.opportunity * 0.08 +
+        (1 - morphologyEffects.establishmentCost) * 0.06,
+      0,
+      1,
+    );
+    return clamp(
+      this.settings.establishmentBiomassFloor *
+        (0.78 + establishmentSupport * 0.7),
+      this.settings.establishmentBiomassFloor * 0.8,
+      0.08,
+    );
+  }
+
   private updatePopulationChangeTracking(): number {
     this.currentOccupancyCounts.fill(0);
 
@@ -2012,8 +2232,12 @@ export class VegetationModel {
     dominantStress: string,
   ): string {
     const netDelta = this.biomassNetDeltaField[index];
+    const establishmentBuffer = this.establishmentBufferField[index];
     if (netDelta < -0.004) {
       const strongestLoss = this.describeStrongestLoss(index);
+      if (establishmentBuffer > 0.58) {
+        return `Still establishing: biomass is falling because early-life losses from ${strongestLoss} are stronger than this step's establishment growth.`;
+      }
       if (this.declinePressureField[index] > this.growthPotentialField[index] * 1.2) {
         return `Biomass is falling because current biomass is above carrying capacity, so decline pressure is stronger than new growth.`;
       }
@@ -2021,6 +2245,9 @@ export class VegetationModel {
         return `Biomass is shrinking because ${strongestLoss} outweighs growth, while reserves still rise through storage recovery and reserve gain.`;
       }
       return `Biomass is shrinking because ${strongestLoss} is larger than current growth input.`;
+    }
+    if (establishmentBuffer > 0.58 && netDelta >= -0.004) {
+      return `Establishing successfully: early-life buffering is active while the plant builds biomass, reserves, and activity.`;
     }
 
     if (this.stressField[index] > 0.6) {
@@ -2092,7 +2319,11 @@ export class VegetationModel {
     activityLevel: number,
     growthScale: number,
     suitability: number,
+    establishmentBuffer: number,
   ): string {
+    if (establishmentBuffer > 0.58 && growthPotential > 0.02) {
+      return "still establishing; growth is being protected while biomass base is built";
+    }
     if (growthPotential <= 0.001 && biomass > carryingCapacity + 0.002) {
       return "biomass already exceeds local carrying capacity";
     }
@@ -2150,7 +2381,16 @@ export class VegetationModel {
     slopeLoss: number,
     standingWaterLoss: number,
     dormancyPressure: number,
+    ageSeconds: number,
+    establishmentBuffer: number,
   ): number {
+    if (
+      ageSeconds < this.settings.establishmentDurationSeconds * 0.75 &&
+      establishmentBuffer > 0.52 &&
+      maintenanceLoss + declineLoss + droughtLoss + floodLoss + slopeLoss + standingWaterLoss > 0.004
+    ) {
+      return DEATH_REASON_ESTABLISHMENT;
+    }
     const entries: Array<[number, number]> = [
       [DEATH_REASON_CAPACITY, declineLoss],
       [DEATH_REASON_MAINTENANCE, maintenanceLoss],
@@ -2210,6 +2450,8 @@ export class VegetationModel {
         return "seasonal suppression";
       case DEATH_REASON_MULTI:
         return "multiple combined stresses";
+      case DEATH_REASON_ESTABLISHMENT:
+        return "establishment failure";
       default:
         return null;
     }

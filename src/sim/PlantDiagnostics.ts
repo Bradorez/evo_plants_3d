@@ -38,6 +38,8 @@ export interface PlantSelectionDiagnostics {
     biomass: number;
     health: number;
     vigor: number;
+    developmentStage: string;
+    developmentProgress: number;
     reserveLevel: number;
     activityLevel: number;
     dormancyPressure: number;
@@ -66,6 +68,8 @@ export interface PlantSelectionDiagnostics {
     slopeStress: number;
     standingWaterStress: number;
     carryingCapacityPressure: number;
+    survivalMargin: number;
+    establishmentBuffer: number;
     totalStress: number;
     dominantStress: string;
   };
@@ -100,8 +104,12 @@ export interface PlantSelectionDiagnostics {
     targetFoliage: number;
     growthPotential: number;
     declinePressure: number;
+    effectiveCarryingCapacity: number;
+    establishmentCapacityBonus: number;
+    establishmentBiomassFloor: number;
     competitionPressure: number;
     competitionAdvantage: number;
+    reserveReliefBoost: number;
     growthBlockReason: string;
   };
   lastOccupant: {

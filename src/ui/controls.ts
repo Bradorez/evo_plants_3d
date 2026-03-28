@@ -113,16 +113,19 @@ export function createControls(
   const plantInspectParentValue = queryElement<HTMLElement>("plantInspectParentValue");
   const plantInspectGenerationValue = queryElement<HTMLElement>("plantInspectGenerationValue");
   const plantInspectAgeValue = queryElement<HTMLElement>("plantInspectAgeValue");
+  const plantInspectStageValue = queryElement<HTMLElement>("plantInspectStageValue");
   const plantInspectBiomassValue = queryElement<HTMLElement>("plantInspectBiomassValue");
   const plantInspectHealthValue = queryElement<HTMLElement>("plantInspectHealthValue");
   const plantInspectReserveValue = queryElement<HTMLElement>("plantInspectReserveValue");
   const plantInspectActivityValue = queryElement<HTMLElement>("plantInspectActivityValue");
   const plantInspectFoliageValue = queryElement<HTMLElement>("plantInspectFoliageValue");
   const plantInspectMaturityValue = queryElement<HTMLElement>("plantInspectMaturityValue");
+  const plantInspectStageProgressValue = queryElement<HTMLElement>("plantInspectStageProgressValue");
   const plantInspectReproductionValue = queryElement<HTMLElement>("plantInspectReproductionValue");
   const plantInspectNetDeltaValue = queryElement<HTMLElement>("plantInspectNetDeltaValue");
   const plantInspectReserveDeltaValue = queryElement<HTMLElement>("plantInspectReserveDeltaValue");
   const plantInspectStressValue = queryElement<HTMLElement>("plantInspectStressValue");
+  const plantInspectSurvivalMarginValue = queryElement<HTMLElement>("plantInspectSurvivalMarginValue");
   const plantInspectActivityDeltaValue = queryElement<HTMLElement>("plantInspectActivityDeltaValue");
   const plantInspectSoilMoistureValue = queryElement<HTMLElement>("plantInspectSoilMoistureValue");
   const plantInspectSurfaceWaterValue = queryElement<HTMLElement>("plantInspectSurfaceWaterValue");
@@ -150,6 +153,9 @@ export function createControls(
   const plantInspectUnfavorableValue = queryElement<HTMLElement>("plantInspectUnfavorableValue");
   const plantInspectGrowthPotentialValue = queryElement<HTMLElement>("plantInspectGrowthPotentialValue");
   const plantInspectCapacityPressureValue = queryElement<HTMLElement>("plantInspectCapacityPressureValue");
+  const plantInspectEffectiveCapacityValue = queryElement<HTMLElement>("plantInspectEffectiveCapacityValue");
+  const plantInspectEstablishmentBufferValue = queryElement<HTMLElement>("plantInspectEstablishmentBufferValue");
+  const plantInspectEstablishmentFloorValue = queryElement<HTMLElement>("plantInspectEstablishmentFloorValue");
   const plantInspectTemperatureStressValue = queryElement<HTMLElement>("plantInspectTemperatureStressValue");
   const plantInspectFloodLossValue = queryElement<HTMLElement>("plantInspectFloodLossValue");
   const plantInspectSlopeLossValue = queryElement<HTMLElement>("plantInspectSlopeLossValue");
@@ -386,16 +392,19 @@ export function createControls(
         plantInspectParentValue.textContent = "-";
         plantInspectGenerationValue.textContent = "-";
         plantInspectAgeValue.textContent = "0.0 s";
+        plantInspectStageValue.textContent = "-";
         plantInspectBiomassValue.textContent = "0.00";
         plantInspectHealthValue.textContent = "0.00";
         plantInspectReserveValue.textContent = "0.00";
         plantInspectActivityValue.textContent = "0.00";
         plantInspectFoliageValue.textContent = "0.00";
         plantInspectMaturityValue.textContent = "0.00";
+        plantInspectStageProgressValue.textContent = "0.00";
         plantInspectReproductionValue.textContent = "0.00";
         plantInspectNetDeltaValue.textContent = "0.000";
         plantInspectReserveDeltaValue.textContent = "0.000";
         plantInspectStressValue.textContent = "mixed";
+        plantInspectSurvivalMarginValue.textContent = "0.000";
         plantInspectActivityDeltaValue.textContent = "0.000";
         plantInspectSoilMoistureValue.textContent = "0.00";
         plantInspectSurfaceWaterValue.textContent = "0.000";
@@ -423,6 +432,9 @@ export function createControls(
         plantInspectUnfavorableValue.textContent = "0.00";
         plantInspectGrowthPotentialValue.textContent = "0.00";
         plantInspectCapacityPressureValue.textContent = "0.00";
+        plantInspectEffectiveCapacityValue.textContent = "0.00";
+        plantInspectEstablishmentBufferValue.textContent = "0.00";
+        plantInspectEstablishmentFloorValue.textContent = "0.000";
         plantInspectTemperatureStressValue.textContent = "0.00";
         plantInspectFloodLossValue.textContent = "0.000";
         plantInspectSlopeLossValue.textContent = "0.000";
@@ -460,16 +472,19 @@ export function createControls(
       plantInspectParentValue.textContent = formatOptionalInteger(selection.parentSpeciesId);
       plantInspectGenerationValue.textContent = formatOptionalInteger(selection.generation);
       plantInspectAgeValue.textContent = `${selection.currentState.ageSeconds.toFixed(1)} s`;
+      plantInspectStageValue.textContent = selection.currentState.developmentStage;
       plantInspectBiomassValue.textContent = selection.currentState.biomass.toFixed(2);
       plantInspectHealthValue.textContent = selection.currentState.health.toFixed(2);
       plantInspectReserveValue.textContent = selection.currentState.reserveLevel.toFixed(2);
       plantInspectActivityValue.textContent = selection.currentState.activityLevel.toFixed(2);
       plantInspectFoliageValue.textContent = selection.currentState.foliageLevel.toFixed(2);
       plantInspectMaturityValue.textContent = selection.currentState.maturityLevel.toFixed(2);
+      plantInspectStageProgressValue.textContent = selection.currentState.developmentProgress.toFixed(2);
       plantInspectReproductionValue.textContent = selection.currentState.reproductionReadiness.toFixed(2);
       plantInspectNetDeltaValue.textContent = formatSigned(selection.budget.netBiomassDelta, 3);
       plantInspectReserveDeltaValue.textContent = formatSigned(selection.budget.reserveDelta, 3);
       plantInspectStressValue.textContent = selection.decline.dominantStress;
+      plantInspectSurvivalMarginValue.textContent = formatSigned(selection.decline.survivalMargin, 3);
       plantInspectActivityDeltaValue.textContent = formatSigned(selection.budget.activityDelta, 3);
       plantInspectSoilMoistureValue.textContent = selection.environment.soilMoisture.toFixed(2);
       plantInspectSurfaceWaterValue.textContent = selection.environment.surfaceWater.toFixed(3);
@@ -498,6 +513,9 @@ export function createControls(
       plantInspectUnfavorableValue.textContent = selection.budget.unfavorablePressure.toFixed(2);
       plantInspectGrowthPotentialValue.textContent = selection.budget.growthPotential.toFixed(2);
       plantInspectCapacityPressureValue.textContent = selection.budget.declinePressure.toFixed(2);
+      plantInspectEffectiveCapacityValue.textContent = selection.budget.effectiveCarryingCapacity.toFixed(2);
+      plantInspectEstablishmentBufferValue.textContent = selection.decline.establishmentBuffer.toFixed(2);
+      plantInspectEstablishmentFloorValue.textContent = selection.budget.establishmentBiomassFloor.toFixed(3);
       plantInspectTemperatureStressValue.textContent = selection.decline.temperatureStress.toFixed(2);
       plantInspectFloodLossValue.textContent = selection.budget.floodLoss.toFixed(3);
       plantInspectSlopeLossValue.textContent = selection.budget.slopeLoss.toFixed(3);
@@ -527,13 +545,13 @@ export function createControls(
             ["slope", selection.budget.slopeLoss],
             ["standing water", selection.budget.standingWaterLoss],
           ],
-        )}.`;
+        )}. Effective capacity ${selection.budget.effectiveCarryingCapacity.toFixed(2)} vs biomass ${selection.currentState.biomass.toFixed(2)}; survival margin ${formatSigned(selection.decline.survivalMargin, 3)}.`;
       plantInspectResourceSummary.textContent =
-        `Reserves: ${formatSigned(selection.budget.reserveDelta, 3)} because gain ${selection.budget.reserveGain.toFixed(3)} and use ${selection.budget.reserveUse.toFixed(3)}. Reserve use does not become biomass directly; it only feeds storage relief ${selection.budget.storageRelief.toFixed(3)}.`;
+        `Reserves: ${formatSigned(selection.budget.reserveDelta, 3)} because gain ${selection.budget.reserveGain.toFixed(3)} and use ${selection.budget.reserveUse.toFixed(3)}. Reserve use does not become biomass directly; it only feeds storage relief ${selection.budget.storageRelief.toFixed(3)} with relief boost ${selection.budget.reserveReliefBoost.toFixed(2)}.`;
       plantInspectSeasonalSummary.textContent =
-        `Seasonal response: opportunity ${selection.budget.opportunity.toFixed(2)}, bad-season pressure ${selection.budget.unfavorablePressure.toFixed(2)}, target activity ${selection.budget.targetActivity.toFixed(2)}, growth scale ${selection.budget.growthScale.toFixed(2)}.`;
+        `Seasonal response: stage ${selection.currentState.developmentStage}, opportunity ${selection.budget.opportunity.toFixed(2)}, bad-season pressure ${selection.budget.unfavorablePressure.toFixed(2)}, target activity ${selection.budget.targetActivity.toFixed(2)}, growth scale ${selection.budget.growthScale.toFixed(2)}.`;
       plantInspectDeclineSummary.textContent =
-        `Decline pressure: dominant ${selection.decline.dominantStress}. Erosion setting: runoff ${selection.erosion.runoffShare.toFixed(2)}, cohesion ${selection.erosion.soilCohesion.toFixed(2)}, roots ${selection.erosion.rootStabilization.toFixed(2)}, organic cover ${selection.erosion.organicCover.toFixed(2)}.`;
+        `Decline pressure: dominant ${selection.decline.dominantStress}. Establishment buffer ${selection.decline.establishmentBuffer.toFixed(2)}. Erosion setting: runoff ${selection.erosion.runoffShare.toFixed(2)}, cohesion ${selection.erosion.soilCohesion.toFixed(2)}, roots ${selection.erosion.rootStabilization.toFixed(2)}, organic cover ${selection.erosion.organicCover.toFixed(2)}.`;
       plantInspectFitnessSummary.textContent =
         `Habitat fit: suitability ${selection.fitness.suitability.toFixed(2)}, carrying capacity ${selection.fitness.carryingCapacity.toFixed(2)}, growth potential ${selection.budget.growthPotential.toFixed(2)}, decline pressure ${selection.budget.declinePressure.toFixed(2)}, competition ${selection.budget.competitionPressure.toFixed(2)}. Erosion gate: power ${selection.erosion.erosivePower.toFixed(2)} vs threshold ${selection.erosion.detachmentThreshold.toFixed(2)}, resistance ${selection.erosion.combinedResistance.toFixed(2)}.`;
       plantInspectLastOccupantValue.textContent = selection.lastOccupant
