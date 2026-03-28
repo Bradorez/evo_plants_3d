@@ -15,6 +15,7 @@ export interface WaterOverlayViewOptions {
   showWaterDepth: boolean;
   showMoisture: boolean;
   showTemperature: boolean;
+  showSeason: boolean;
   showVegetation: boolean;
   plantDiagnosticOverlay: PlantDiagnosticOverlayMode;
 }

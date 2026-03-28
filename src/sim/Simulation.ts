@@ -142,6 +142,7 @@ export class Simulation {
     this.waterBalance = new WaterBalanceModel();
     this.sandbox = new SandboxModel(this.terrain.grid.cellCount);
     this.seasonModel = new SeasonModel();
+    this.seasonModel.rebuild(this.terrain.grid, this.terrain.seed);
     this.erosion = new ErosionModel(
       this.terrain.grid,
       this.terrain.heights,
@@ -156,7 +157,7 @@ export class Simulation {
     this.soilStability = new SoilStabilityModel(this.terrain.grid.cellCount);
     this.temperatureModel = new TemperatureModel(this.terrain);
     this.seasonState = this.seasonModel.getState();
-    this.temperatureModel.applySeasonalOffset(this.seasonState.temperatureOffset);
+    this.temperatureModel.applySeasonalOffsets(this.seasonModel.getLocalFields().temperatureOffset);
     this.vegetation = new VegetationModel(this.terrain.grid.cellCount, this.terrain.seed);
     this.temperature = this.temperatureModel.getTemperature();
     this.soilMoisture = this.moisture.getMoisture();
@@ -218,7 +219,7 @@ export class Simulation {
     // regeneration or the erase tool if you want to clear user-made springs.
     this.seasonModel.reset();
     this.seasonState = this.seasonModel.getState();
-    this.temperatureModel.applySeasonalOffset(this.seasonState.temperatureOffset);
+    this.temperatureModel.applySeasonalOffsets(this.seasonModel.getLocalFields().temperatureOffset);
     this.temperature = this.temperatureModel.getTemperature();
     this.refreshSoilStability(0);
     this.syncVegetationState();
@@ -241,6 +242,7 @@ export class Simulation {
     this.vegetationAccumulator = 0;
     this.slowProcessAccumulator = 0;
     this.seasonModel.reset();
+    this.seasonModel.rebuild(this.terrain.grid, this.terrain.seed);
 
     const nextRainfall = new RainfallModel(
       this.terrain.grid,
@@ -270,7 +272,7 @@ export class Simulation {
     this.sandbox = new SandboxModel(this.terrain.grid.cellCount);
     this.temperatureModel = new TemperatureModel(this.terrain);
     this.seasonState = this.seasonModel.getState();
-    this.temperatureModel.applySeasonalOffset(this.seasonState.temperatureOffset);
+    this.temperatureModel.applySeasonalOffsets(this.seasonModel.getLocalFields().temperatureOffset);
     this.vegetation = new VegetationModel(this.terrain.grid.cellCount, this.terrain.seed);
     this.waterDepth = this.hydrology.getWaterDepth();
     this.erosion.setWaterDepthBuffer(this.waterDepth);
@@ -318,6 +320,9 @@ export class Simulation {
       return null;
     }
 
+    const cellIndex = this.terrain.grid.index(cellX, cellY);
+    const localSeason = this.seasonModel.getLocalFields();
+
     return this.vegetation.inspectCell(
       this.terrain,
       cellX,
@@ -338,13 +343,17 @@ export class Simulation {
       this.erosion.getArmoringField(),
       this.erosion.getErosivePowerField(),
       {
-        phase: this.seasonState.phase,
-        rainfallMultiplier: this.seasonState.rainfallMultiplier,
-        temperatureOffset: this.seasonState.temperatureOffset,
-        evaporationMultiplier: this.seasonState.evaporationMultiplier,
-        seasonLabel: this.seasonState.seasonLabel,
+        phase: localSeason.phase[cellIndex],
+        rainfallMultiplier: localSeason.rainfallMultiplier[cellIndex],
+        temperatureOffset: localSeason.temperatureOffset[cellIndex],
+        evaporationMultiplier: localSeason.evaporationMultiplier[cellIndex],
+        seasonLabel: describeLocalSeason(localSeason.phase[cellIndex], this.seasonState.seasonLabel),
       },
     );
+  }
+
+  public getLocalSeasonPhaseField(): Float32Array {
+    return this.seasonModel.getLocalFields().phase;
   }
 
   public getPlantActivityField(): Float32Array {
@@ -453,7 +462,7 @@ export class Simulation {
   private advanceSeason(dtSeconds: number): void {
     this.seasonModel.step(dtSeconds);
     this.seasonState = this.seasonModel.getState();
-    this.temperatureModel.applySeasonalOffset(this.seasonState.temperatureOffset);
+    this.temperatureModel.applySeasonalOffsets(this.seasonModel.getLocalFields().temperatureOffset);
     this.temperature = this.temperatureModel.getTemperature();
   }
 
@@ -564,7 +573,7 @@ export class Simulation {
       this.rainfall,
       this.waterDepth,
       this.soilMoisture,
-      this.seasonState.rainfallMultiplier,
+      this.seasonModel.getLocalFields().rainfallMultiplier,
       stepSeconds,
     );
     const hydrologyResult = this.hydrology.step(stepSeconds);
@@ -573,7 +582,7 @@ export class Simulation {
       this.terrain,
       this.waterDepth,
       this.temperature,
-      this.seasonState.evaporationMultiplier,
+      this.seasonModel.getLocalFields().evaporationMultiplier,
       stepSeconds,
     );
     this.erosion.setWaterDepthBuffer(this.waterDepth);
@@ -605,8 +614,8 @@ export class Simulation {
       this.hydrology.getFlowIntensity(),
       this.soilStability.getInfiltrationRecharge(),
       this.soilStability.getOrganicCover(),
-      this.seasonState.rainfallMultiplier,
-      this.seasonState.soilDryingMultiplier,
+      this.seasonModel.getLocalFields().rainfallMultiplier,
+      this.seasonModel.getLocalFields().soilDryingMultiplier,
       stepSeconds,
     );
     this.soilStability.clearHydrologySignals();
@@ -629,8 +638,8 @@ export class Simulation {
       this.persistentWetness,
       this.floodProne,
       this.waterDepth,
-      this.seasonState.plantGrowthMultiplier,
-      this.seasonState.plantStressMultiplier,
+      this.seasonModel.getLocalFields().plantGrowthMultiplier,
+      this.seasonModel.getLocalFields().plantStressMultiplier,
       stepSeconds,
     );
     this.vegetationBiomass = this.vegetation.getBiomass();
@@ -696,4 +705,33 @@ export class Simulation {
       detachmentThreshold: this.soilStability.getDetachmentThreshold(),
     };
   }
+}
+
+function describeLocalSeason(localPhase: number, fallback: string): string {
+  const wrapped = ((localPhase % 1) + 1) % 1;
+  if (wrapped < 0.125) {
+    return "Early Spring";
+  }
+  if (wrapped < 0.25) {
+    return "Late Spring";
+  }
+  if (wrapped < 0.375) {
+    return "Early Summer";
+  }
+  if (wrapped < 0.5) {
+    return "Late Summer";
+  }
+  if (wrapped < 0.625) {
+    return "Early Autumn";
+  }
+  if (wrapped < 0.75) {
+    return "Late Autumn";
+  }
+  if (wrapped < 0.875) {
+    return "Early Winter";
+  }
+  if (wrapped < 1) {
+    return "Late Winter";
+  }
+  return fallback;
 }

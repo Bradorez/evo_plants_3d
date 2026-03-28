@@ -42,6 +42,13 @@ export class TemperatureModel {
     }
   }
 
+  public applySeasonalOffsets(offsets: Float32Array): void {
+    const count = Math.min(this.temperature.length, offsets.length);
+    for (let index = 0; index < count; index += 1) {
+      this.temperature[index] = clamp(this.baseTemperature[index] + offsets[index], 0, 1);
+    }
+  }
+
   public rebuild(terrain: TerrainData): void {
     const width = terrain.grid.width;
     const height = terrain.grid.height;

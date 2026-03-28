@@ -367,10 +367,12 @@ export class TerrainMeshRenderer {
     plantReproductionReadiness: Float32Array,
     plantStress: Float32Array,
     plantSuitability: Float32Array,
+    localSeasonPhase: Float32Array,
     plantDiagnosticOverlay: PlantDiagnosticOverlayMode,
     dtSeconds: number,
     showMoisture: boolean,
     showTemperature: boolean,
+    showSeason: boolean,
     showVegetation: boolean,
   ): void {
     if (
@@ -389,7 +391,8 @@ export class TerrainMeshRenderer {
       plantActivity.length !== this.topVertexCount ||
       plantReproductionReadiness.length !== this.topVertexCount ||
       plantStress.length !== this.topVertexCount ||
-      plantSuitability.length !== this.topVertexCount
+      plantSuitability.length !== this.topVertexCount ||
+      localSeasonPhase.length !== this.topVertexCount
     ) {
       return;
     }
@@ -511,6 +514,15 @@ export class TerrainMeshRenderer {
             this.elevationField[index],
             slope,
             heat,
+            ecologicalMoisture,
+            water,
+          )
+        : showSeason
+          ? this.getSeasonVisualizationColor(
+            hydrologyColor,
+            this.elevationField[index],
+            slope,
+            localSeasonPhase[index],
             ecologicalMoisture,
             water,
           )
@@ -1036,6 +1048,32 @@ export class TerrainMeshRenderer {
     const elevationLift = clamp(0.92 + elevation * 0.08, 0.9, 1);
     const shade = 1 - slope * 0.08;
     return [r * elevationLift * shade, g * elevationLift * shade, b * elevationLift * shade];
+  }
+
+  /**
+   * Season view exposes the spatially varying phase field rather than the
+   * static temperature field. Different hues represent different local points
+   * in the annual cycle, while moisture keeps the result grounded in the
+   * terrain context.
+   */
+  private getSeasonVisualizationColor(
+    base: [number, number, number],
+    elevation: number,
+    slope: number,
+    seasonPhase: number,
+    ecologicalMoisture: number,
+    surfaceWater: number,
+  ): [number, number, number] {
+    const wrapped = ((seasonPhase % 1) + 1) % 1;
+    const phaseHue = wrapped;
+    const saturation = clamp(0.52 + ecologicalMoisture * 0.08 - surfaceWater * 0.12, 0.34, 0.68);
+    const value = clamp(0.82 + ecologicalMoisture * 0.08, 0.76, 0.94);
+    const seasonColor = this.hsvToRgb(phaseHue, saturation, value);
+    const blend = clamp(0.48 + ecologicalMoisture * 0.1 + surfaceWater * 0.06, 0.38, 0.72);
+    const mixed = this.mixDebugColor(base, seasonColor, blend);
+    const elevationLift = clamp(0.93 + elevation * 0.07, 0.9, 1);
+    const shade = 1 - slope * 0.08;
+    return [mixed[0] * elevationLift * shade, mixed[1] * elevationLift * shade, mixed[2] * elevationLift * shade];
   }
 
   /**

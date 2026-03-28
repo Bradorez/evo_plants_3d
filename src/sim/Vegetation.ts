@@ -737,8 +737,8 @@ export class VegetationModel {
     persistentWetness: Float32Array,
     floodProne: Float32Array,
     waterDepth: Float32Array,
-    seasonalGrowthMultiplier: number,
-    seasonalStressMultiplier: number,
+    seasonalGrowthMultiplier: number | Float32Array,
+    seasonalStressMultiplier: number | Float32Array,
     dtSeconds: number,
   ): void {
     if (!Number.isFinite(dtSeconds) || dtSeconds <= 0) {
@@ -746,8 +746,6 @@ export class VegetationModel {
     }
 
     this.vegetationStepCounter += 1;
-    const growthMultiplier = clamp(seasonalGrowthMultiplier, 0.6, 1.5);
-    const stressMultiplier = clamp(seasonalStressMultiplier, 0.7, 1.8);
     let colonizationsThisStep = 0;
     let deathsThisStep = 0;
     this.updateNeighborhoodSignals(terrain, soilMoisture, persistentWetness);
@@ -783,6 +781,20 @@ export class VegetationModel {
           standingWater,
           slope,
           normalizedElevation,
+        );
+        const localGrowthMultiplier = clamp(
+          typeof seasonalGrowthMultiplier === "number"
+            ? seasonalGrowthMultiplier
+            : seasonalGrowthMultiplier[index] ?? 1,
+          0.6,
+          1.5,
+        );
+        const localStressMultiplier = clamp(
+          typeof seasonalStressMultiplier === "number"
+            ? seasonalStressMultiplier
+            : seasonalStressMultiplier[index] ?? 1,
+          0.7,
+          1.8,
         );
         const currentSpeciesId = this.dominantSpeciesId[index];
         const currentSpecies = currentSpeciesId === SPECIES_NONE ? null : this.speciesCatalog[currentSpeciesId];
@@ -851,8 +863,8 @@ export class VegetationModel {
               baseSeasonalState.activityLevel,
               baseSeasonalState.reserveLevel,
               baseSeasonalState.foliageLevel,
-              growthMultiplier,
-              stressMultiplier,
+              localGrowthMultiplier,
+              localStressMultiplier,
               dtSeconds,
               this.settings.seasonality,
             )
@@ -987,7 +999,7 @@ export class VegetationModel {
             (1 - growthSuppression) *
             seasonalResponse.growthScale *
             developmentState.growthBoost *
-            growthMultiplier *
+            localGrowthMultiplier *
             this.resolveVigor(activeStressSpeciesId) *
             dtSeconds;
           declineLoss = declinePressure * this.settings.declineRate * dtSeconds;
@@ -995,21 +1007,21 @@ export class VegetationModel {
           droughtLoss =
             droughtStress *
             this.settings.droughtStressStrength *
-            stressMultiplier *
+            localStressMultiplier *
             seasonalResponse.stressScale *
             developmentState.stressShield *
             dtSeconds;
           floodLoss =
             floodStress *
             this.settings.floodStressStrength *
-            stressMultiplier *
+            localStressMultiplier *
             lerp(seasonalResponse.stressScale, 1, 0.35) *
             developmentState.stressShield *
             dtSeconds;
           slopeLoss =
             slopeStress *
             this.settings.slopeStressStrength *
-            lerp(stressMultiplier, 1, 0.5) *
+            lerp(localStressMultiplier, 1, 0.5) *
             lerp(seasonalResponse.stressScale, 1, 0.45) *
             developmentState.stressShield *
             dtSeconds;
@@ -1071,8 +1083,8 @@ export class VegetationModel {
                   colonizerInitialSeasonalState.activityLevel,
                   colonizerInitialSeasonalState.reserveLevel,
                   colonizerInitialSeasonalState.foliageLevel,
-                  growthMultiplier,
-                  stressMultiplier,
+                  localGrowthMultiplier,
+                  localStressMultiplier,
                   dtSeconds,
                   this.settings.seasonality,
                 )
@@ -1089,7 +1101,7 @@ export class VegetationModel {
               spreadDrive *
               colonizerSeasonalResponse.spreadScale *
               (0.45 + colonizerSeasonalResponse.reproductionReadiness * 0.55) *
-              growthMultiplier *
+              localGrowthMultiplier *
               (0.58 + vigor * 0.42) *
               dtSeconds;
             establishmentBiomassFloor = this.resolveColonizationBiomassFloor(

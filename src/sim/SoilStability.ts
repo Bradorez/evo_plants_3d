@@ -261,19 +261,30 @@ export class SoilStabilityModel {
     rainfall: RainfallModel,
     waterDepth: Float32Array,
     soilMoisture: Float32Array,
-    intensityMultiplier: number,
+    intensityMultiplier: number | Float32Array,
     dtSeconds: number,
   ): RainPartitionResult {
-    if (rainfall.getIntensity() <= 0 || dtSeconds <= 0 || intensityMultiplier <= 0) {
+    if (
+      rainfall.getIntensity() <= 0 ||
+      dtSeconds <= 0 ||
+      (typeof intensityMultiplier === "number" && intensityMultiplier <= 0)
+    ) {
       return { runoffWater: 0, infiltratedWater: 0 };
     }
 
     let runoffWater = 0;
     let infiltratedWater = 0;
-    const effectiveIntensity = rainfall.getIntensity() * intensityMultiplier;
+    const baseIntensity = rainfall.getIntensity();
 
     for (let index = 0; index < waterDepth.length; index += 1) {
-      const amount = effectiveIntensity * rainfall.distribution[index] * dtSeconds * 0.02;
+      const localMultiplier =
+        typeof intensityMultiplier === "number"
+          ? intensityMultiplier
+          : intensityMultiplier[index] ?? 1;
+      if (localMultiplier <= 0) {
+        continue;
+      }
+      const amount = baseIntensity * localMultiplier * rainfall.distribution[index] * dtSeconds * 0.02;
       if (amount <= 0) {
         this.infiltrationShare[index] = clamp(this.infiltrationShare[index], 0.05, 0.95);
         this.runoffShare[index] = 1 - this.infiltrationShare[index];

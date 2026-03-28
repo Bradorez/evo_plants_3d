@@ -40,7 +40,7 @@ export class WaterBalanceModel {
     terrain: TerrainData,
     waterDepth: Float32Array,
     temperature: Float32Array,
-    evaporationMultiplier: number,
+    evaporationMultiplier: number | Float32Array,
     dtSeconds: number,
   ): WaterBalanceStepResult {
     if (!Number.isFinite(dtSeconds) || dtSeconds <= 0) {
@@ -66,11 +66,10 @@ export class WaterBalanceModel {
   private applyEvaporation(
     waterDepth: Float32Array,
     temperature: Float32Array,
-    evaporationMultiplier: number,
+    evaporationMultiplier: number | Float32Array,
     dtSeconds: number,
   ): number {
     let evaporatedWater = 0;
-    const seasonalMultiplier = clamp(evaporationMultiplier, 0.45, 2.2);
 
     for (let index = 0; index < waterDepth.length; index += 1) {
       const depth = waterDepth[index];
@@ -79,6 +78,13 @@ export class WaterBalanceModel {
         continue;
       }
 
+      const seasonalMultiplier = clamp(
+        typeof evaporationMultiplier === "number"
+          ? evaporationMultiplier
+          : evaporationMultiplier[index] ?? 1,
+        0.45,
+        2.2,
+      );
       const shallowFactor = clamp((0.025 - depth) / 0.025, 0, 1);
       const heatFactor =
         1 + (temperature[index] - 0.5) * this.settings.hotEvaporationSensitivity;

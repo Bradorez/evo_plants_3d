@@ -1,4 +1,5 @@
 import { clamp, lerp } from "../utils/math";
+import type { Grid } from "./Grid";
 
 export interface SeasonSettings {
   yearLengthSeconds: number;
@@ -10,6 +11,12 @@ export interface SeasonSettings {
   plantStressSeasonSensitivity: number;
   rainfallPhaseOffset: number;
   temperaturePhaseOffset: number;
+  regionalBlendStrength: number;
+  regionalNoiseStrength: number;
+  regionNorthWestPhaseOffset: number;
+  regionNorthEastPhaseOffset: number;
+  regionSouthWestPhaseOffset: number;
+  regionSouthEastPhaseOffset: number;
 }
 
 export interface SeasonState {
@@ -24,6 +31,16 @@ export interface SeasonState {
   seasonLabel: string;
 }
 
+export interface LocalSeasonFields {
+  phase: Float32Array;
+  rainfallMultiplier: Float32Array;
+  temperatureOffset: Float32Array;
+  evaporationMultiplier: Float32Array;
+  soilDryingMultiplier: Float32Array;
+  plantGrowthMultiplier: Float32Array;
+  plantStressMultiplier: Float32Array;
+}
+
 /**
  * SeasonModel provides a lightweight recurring annual forcing curve shared by
  * rainfall, temperature, water loss, and plant ecology. It is intentionally
@@ -33,7 +50,7 @@ export interface SeasonState {
  */
 export class SeasonModel {
   public readonly settings: SeasonSettings = {
-    yearLengthSeconds: 240,
+    yearLengthSeconds: 720,
     rainfallSeasonAmplitude: 0.5,
     temperatureSeasonAmplitude: 0.16,
     evaporationSeasonSensitivity: 0.38,
@@ -42,8 +59,24 @@ export class SeasonModel {
     plantStressSeasonSensitivity: 0.32,
     rainfallPhaseOffset: -0.08,
     temperaturePhaseOffset: 0.12,
+    regionalBlendStrength: 0.92,
+    regionalNoiseStrength: 0.04,
+    regionNorthWestPhaseOffset: 0.0,
+    regionNorthEastPhaseOffset: 0.18,
+    regionSouthWestPhaseOffset: 0.36,
+    regionSouthEastPhaseOffset: 0.56,
   };
 
+  private localFields: LocalSeasonFields = {
+    phase: new Float32Array(),
+    rainfallMultiplier: new Float32Array(),
+    temperatureOffset: new Float32Array(),
+    evaporationMultiplier: new Float32Array(),
+    soilDryingMultiplier: new Float32Array(),
+    plantGrowthMultiplier: new Float32Array(),
+    plantStressMultiplier: new Float32Array(),
+  };
+  private phaseOffsetField = new Float32Array();
   private elapsedSeconds = 0;
   private state: SeasonState = {
     phase: 0,
@@ -56,6 +89,38 @@ export class SeasonModel {
     plantStressMultiplier: 1,
     seasonLabel: "Early Spring",
   };
+
+  public rebuild(grid: Grid, seed: number): void {
+    this.phaseOffsetField = new Float32Array(grid.cellCount);
+    this.localFields = {
+      phase: new Float32Array(grid.cellCount),
+      rainfallMultiplier: new Float32Array(grid.cellCount),
+      temperatureOffset: new Float32Array(grid.cellCount),
+      evaporationMultiplier: new Float32Array(grid.cellCount),
+      soilDryingMultiplier: new Float32Array(grid.cellCount),
+      plantGrowthMultiplier: new Float32Array(grid.cellCount),
+      plantStressMultiplier: new Float32Array(grid.cellCount),
+    };
+
+    const invWidth = 1 / Math.max(grid.width - 1, 1);
+    const invHeight = 1 / Math.max(grid.height - 1, 1);
+
+    for (let y = 0; y < grid.height; y += 1) {
+      for (let x = 0; x < grid.width; x += 1) {
+        const index = grid.index(x, y);
+        const nx = x * invWidth;
+        const ny = y * invHeight;
+        const blendedQuadrantOffset = this.sampleRegionalPhaseOffset(nx, ny);
+        const broadNoise =
+          Math.sin((nx * 1.7 + ny * 0.9 + (seed % 97) * 0.01) * Math.PI * 2) *
+          Math.cos((ny * 1.3 - nx * 0.6 + (seed % 53) * 0.013) * Math.PI * 2) *
+          this.settings.regionalNoiseStrength;
+        this.phaseOffsetField[index] = ((blendedQuadrantOffset + broadNoise) % 1 + 1) % 1;
+      }
+    }
+
+    this.recomputeState();
+  }
 
   public step(dtSeconds: number): void {
     if (!Number.isFinite(dtSeconds) || dtSeconds <= 0) {
@@ -75,10 +140,64 @@ export class SeasonModel {
     return this.state;
   }
 
+  public getLocalFields(): LocalSeasonFields {
+    return this.localFields;
+  }
+
   private recomputeState(): void {
     const yearLength = Math.max(1, this.settings.yearLengthSeconds);
     const year = Math.floor(this.elapsedSeconds / yearLength);
     const phase = (this.elapsedSeconds / yearLength) % 1;
+    const globalForcing = this.computeForcingForPhase(phase);
+
+    let rainSum = 0;
+    let tempSum = 0;
+    let evapSum = 0;
+    let dryingSum = 0;
+    let growthSum = 0;
+    let stressSum = 0;
+
+    for (let index = 0; index < this.phaseOffsetField.length; index += 1) {
+      const localPhase = ((phase + this.phaseOffsetField[index]) % 1 + 1) % 1;
+      const forcing = this.computeForcingForPhase(localPhase);
+      this.localFields.phase[index] = localPhase;
+      this.localFields.rainfallMultiplier[index] = forcing.rainfallMultiplier;
+      this.localFields.temperatureOffset[index] = forcing.temperatureOffset;
+      this.localFields.evaporationMultiplier[index] = forcing.evaporationMultiplier;
+      this.localFields.soilDryingMultiplier[index] = forcing.soilDryingMultiplier;
+      this.localFields.plantGrowthMultiplier[index] = forcing.plantGrowthMultiplier;
+      this.localFields.plantStressMultiplier[index] = forcing.plantStressMultiplier;
+
+      rainSum += forcing.rainfallMultiplier;
+      tempSum += forcing.temperatureOffset;
+      evapSum += forcing.evaporationMultiplier;
+      dryingSum += forcing.soilDryingMultiplier;
+      growthSum += forcing.plantGrowthMultiplier;
+      stressSum += forcing.plantStressMultiplier;
+    }
+
+    const localCount = Math.max(this.phaseOffsetField.length, 1);
+
+    this.state = {
+      phase,
+      year,
+      rainfallMultiplier:
+        this.phaseOffsetField.length > 0 ? rainSum / localCount : globalForcing.rainfallMultiplier,
+      temperatureOffset:
+        this.phaseOffsetField.length > 0 ? tempSum / localCount : globalForcing.temperatureOffset,
+      evaporationMultiplier:
+        this.phaseOffsetField.length > 0 ? evapSum / localCount : globalForcing.evaporationMultiplier,
+      soilDryingMultiplier:
+        this.phaseOffsetField.length > 0 ? dryingSum / localCount : globalForcing.soilDryingMultiplier,
+      plantGrowthMultiplier:
+        this.phaseOffsetField.length > 0 ? growthSum / localCount : globalForcing.plantGrowthMultiplier,
+      plantStressMultiplier:
+        this.phaseOffsetField.length > 0 ? stressSum / localCount : globalForcing.plantStressMultiplier,
+      seasonLabel: describeSeason(phase),
+    };
+  }
+
+  private computeForcingForPhase(phase: number) {
     const wetSignal = this.sampleSeasonWave(phase + this.settings.rainfallPhaseOffset);
     const warmSignal = this.sampleSeasonWave(phase + this.settings.temperaturePhaseOffset);
     const wetAnomaly = wetSignal * 2 - 1;
@@ -86,52 +205,59 @@ export class SeasonModel {
     const dryAnomaly = -wetAnomaly;
     const mildTemperature = 1 - Math.abs(warmAnomaly);
 
-    const rainfallMultiplier = clamp(
-      1 + wetAnomaly * this.settings.rainfallSeasonAmplitude,
-      0.18,
-      2.25,
-    );
-    const temperatureOffset = warmAnomaly * this.settings.temperatureSeasonAmplitude;
-    const evaporationMultiplier = clamp(
-      1 +
-        warmAnomaly * this.settings.evaporationSeasonSensitivity +
-        dryAnomaly * 0.12,
-      0.55,
-      1.85,
-    );
-    const soilDryingMultiplier = clamp(
-      1 +
-        warmAnomaly * this.settings.soilDryingSeasonSensitivity +
-        dryAnomaly * 0.16,
-      0.58,
-      1.8,
-    );
-    const plantGrowthMultiplier = clamp(
-      1 +
-        wetAnomaly * this.settings.plantGrowthSeasonSensitivity * 0.6 +
-        (mildTemperature - 0.5) * this.settings.plantGrowthSeasonSensitivity * 0.8,
-      0.68,
-      1.35,
-    );
-    const plantStressMultiplier = clamp(
-      1 +
-        dryAnomaly * this.settings.plantStressSeasonSensitivity * 0.72 +
-        Math.max(0, warmAnomaly) * this.settings.plantStressSeasonSensitivity * 0.65,
-      0.72,
-      1.65,
-    );
-
-    this.state = {
-      phase,
-      year,
-      rainfallMultiplier,
-      temperatureOffset,
-      evaporationMultiplier,
-      soilDryingMultiplier,
-      plantGrowthMultiplier,
-      plantStressMultiplier,
-      seasonLabel: describeSeason(phase),
+    return {
+      rainfallMultiplier: clamp(
+        1 + wetAnomaly * this.settings.rainfallSeasonAmplitude,
+        0.18,
+        2.25,
+      ),
+      temperatureOffset: warmAnomaly * this.settings.temperatureSeasonAmplitude,
+      evaporationMultiplier: clamp(
+        1 + warmAnomaly * this.settings.evaporationSeasonSensitivity + dryAnomaly * 0.12,
+        0.55,
+        1.85,
+      ),
+      soilDryingMultiplier: clamp(
+        1 + warmAnomaly * this.settings.soilDryingSeasonSensitivity + dryAnomaly * 0.16,
+        0.58,
+        1.8,
+      ),
+      plantGrowthMultiplier: clamp(
+        1 +
+          wetAnomaly * this.settings.plantGrowthSeasonSensitivity * 0.6 +
+          (mildTemperature - 0.5) * this.settings.plantGrowthSeasonSensitivity * 0.8,
+        0.68,
+        1.35,
+      ),
+      plantStressMultiplier: clamp(
+        1 +
+          dryAnomaly * this.settings.plantStressSeasonSensitivity * 0.72 +
+          Math.max(0, warmAnomaly) * this.settings.plantStressSeasonSensitivity * 0.65,
+        0.72,
+        1.65,
+      ),
     };
+  }
+
+  private sampleRegionalPhaseOffset(nx: number, ny: number): number {
+    const smoothX = this.smoothBlend(nx);
+    const smoothY = this.smoothBlend(ny);
+    const north = lerp(
+      this.settings.regionNorthWestPhaseOffset,
+      this.settings.regionNorthEastPhaseOffset,
+      smoothX,
+    );
+    const south = lerp(
+      this.settings.regionSouthWestPhaseOffset,
+      this.settings.regionSouthEastPhaseOffset,
+      smoothX,
+    );
+    return ((lerp(north, south, smoothY) * this.settings.regionalBlendStrength) % 1 + 1) % 1;
+  }
+
+  private smoothBlend(value: number): number {
+    const clamped = clamp(value, 0, 1);
+    return clamped * clamped * (3 - 2 * clamped);
   }
 
   private sampleSeasonWave(phase: number): number {

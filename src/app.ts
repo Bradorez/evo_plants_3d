@@ -37,6 +37,7 @@ class TerrainHydrologyApp {
     showWaterDepth: true,
     showMoisture: false,
     showTemperature: false,
+    showSeason: false,
     showVegetation: false,
     plantDiagnosticOverlay: "none",
   };
@@ -180,10 +181,12 @@ class TerrainHydrologyApp {
       this.simulation.getPlantReproductionReadinessField(),
       this.simulation.getPlantStressField(),
       this.simulation.getPlantSuitabilityField(),
+      this.simulation.getLocalSeasonPhaseField(),
       this.viewOptions.plantDiagnosticOverlay,
       simulatedDeltaSeconds,
       this.viewOptions.showMoisture,
       this.viewOptions.showTemperature,
+      this.viewOptions.showSeason,
       this.viewOptions.showVegetation,
     );
 

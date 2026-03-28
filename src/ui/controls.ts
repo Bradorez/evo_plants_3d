@@ -71,6 +71,7 @@ export function createControls(
   const waterDepthViewInput = queryElement<HTMLInputElement>("waterDepthViewInput");
   const moistureViewInput = queryElement<HTMLInputElement>("moistureViewInput");
   const temperatureViewInput = queryElement<HTMLInputElement>("temperatureViewInput");
+  const seasonViewInput = queryElement<HTMLInputElement>("seasonViewInput");
   const vegetationViewInput = queryElement<HTMLInputElement>("vegetationViewInput");
   const plantDiagnosticOverlayInput = queryElement<HTMLSelectElement>("plantDiagnosticOverlayInput");
   const seedValue = queryElement<HTMLElement>("seedValue");
@@ -229,6 +230,7 @@ export function createControls(
       showWaterDepth: waterDepthViewInput.checked,
       showMoisture: moistureViewInput.checked,
       showTemperature: temperatureViewInput.checked,
+      showSeason: seasonViewInput.checked,
       showVegetation: vegetationViewInput.checked,
       plantDiagnosticOverlay: plantDiagnosticOverlayInput.value as WaterOverlayViewOptions["plantDiagnosticOverlay"],
     });
@@ -242,6 +244,7 @@ export function createControls(
   waterDepthViewInput.checked = initialState.viewOptions.showWaterDepth;
   moistureViewInput.checked = initialState.viewOptions.showMoisture;
   temperatureViewInput.checked = initialState.viewOptions.showTemperature;
+  seasonViewInput.checked = initialState.viewOptions.showSeason;
   vegetationViewInput.checked = initialState.viewOptions.showVegetation;
   plantDiagnosticOverlayInput.value = initialState.viewOptions.plantDiagnosticOverlay;
   updateRunningText();
@@ -324,6 +327,7 @@ export function createControls(
   waterDepthViewInput.addEventListener("change", emitViewOptions);
   moistureViewInput.addEventListener("change", emitViewOptions);
   temperatureViewInput.addEventListener("change", emitViewOptions);
+  seasonViewInput.addEventListener("change", emitViewOptions);
   vegetationViewInput.addEventListener("change", emitViewOptions);
   plantDiagnosticOverlayInput.addEventListener("change", emitViewOptions);
 
@@ -581,6 +585,7 @@ export function createControls(
       showWaterDepth: waterDepthViewInput.checked,
       showMoisture: moistureViewInput.checked,
       showTemperature: temperatureViewInput.checked,
+      showSeason: seasonViewInput.checked,
       showVegetation: vegetationViewInput.checked,
       plantDiagnosticOverlay: plantDiagnosticOverlayInput.value as WaterOverlayViewOptions["plantDiagnosticOverlay"],
     }),
