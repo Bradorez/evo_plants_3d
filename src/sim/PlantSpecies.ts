@@ -69,6 +69,19 @@ export interface PlantMorphologyTraits {
   clumping: number;
 }
 
+export interface PlantSeasonalTraits {
+  dormancyTendency: number;
+  dormancyTriggerDryness: number;
+  dormancyTriggerColdOrLowTemperature: number;
+  resourceStorageCapacity: number;
+  reactivationSpeed: number;
+  growthWindowFlexibility: number;
+  leafPersistence: number;
+  leafDropBias: number;
+  regrowthRate: number;
+  reproductionThreshold: number;
+}
+
 export interface PlantSpeciesDefinition {
   id: number;
   parentId: number | null;
@@ -77,6 +90,7 @@ export interface PlantSpeciesDefinition {
   ecologyProfile: number;
   ecology: PlantEcologyTraits;
   morphology: PlantMorphologyTraits;
+  seasonal: PlantSeasonalTraits;
   phenotype: PlantPhenotypeClass;
   hueSeed: number;
 }
@@ -177,6 +191,19 @@ export const MORPHOLOGY_BOUNDS = {
   clumping: [0, 1] as const,
 };
 
+export const SEASONAL_BOUNDS = {
+  dormancyTendency: [0, 1] as const,
+  dormancyTriggerDryness: [0.08, 0.95] as const,
+  dormancyTriggerColdOrLowTemperature: [0.08, 0.95] as const,
+  resourceStorageCapacity: [0, 1] as const,
+  reactivationSpeed: [0, 1] as const,
+  growthWindowFlexibility: [0, 1] as const,
+  leafPersistence: [0, 1] as const,
+  leafDropBias: [0, 1] as const,
+  regrowthRate: [0, 1] as const,
+  reproductionThreshold: [0.05, 0.95] as const,
+};
+
 export const MORPHOLOGY_ECOLOGY_SETTINGS = {
   maintenanceSizeWeight: 0.34,
   maintenanceStructureWeight: 0.28,
@@ -227,6 +254,14 @@ export function createInitialSpeciesCatalog(seed: number): PlantSpeciesDefinitio
     const random = createSeededRandom(seed + index * 731);
     const ecology = mutateEcology(template.ecology, random, 0.08);
     const morphology = mutateMorphology(template.morphology, random, 0.09);
+    const seasonal = mutateSeasonal(
+      deriveBaseSeasonalTraits(ecology, morphology),
+      random,
+      0.08,
+      undefined,
+      ecology,
+      morphology,
+    );
     const phenotype = classifyPhenotype(morphology);
 
     return {
@@ -237,6 +272,7 @@ export function createInitialSpeciesCatalog(seed: number): PlantSpeciesDefinitio
       ecologyProfile: template.ecologyProfile,
       ecology,
       morphology,
+      seasonal,
       phenotype,
       hueSeed: mixSeed(seed + index * 1237),
     };
@@ -252,6 +288,7 @@ export function mutateSpecies(
   const random = createSeededRandom(seed + newId * 977 + parent.id * 131);
   const ecology = mutateEcology(parent.ecology, random, 0.12, habitat);
   const morphology = mutateMorphology(parent.morphology, random, 0.14, habitat, ecology);
+  const seasonal = mutateSeasonal(parent.seasonal, random, 0.12, habitat, ecology, morphology);
   const phenotype = classifyPhenotype(morphology);
 
   return {
@@ -262,6 +299,7 @@ export function mutateSpecies(
     ecologyProfile: classifyEcologyProfile(ecology),
     ecology,
     morphology,
+    seasonal,
     phenotype,
     hueSeed: mixSeed(seed + newId * 1543 + parent.hueSeed),
   };
@@ -1188,6 +1226,303 @@ function mutateEcology(
   return ecology;
 }
 
+/**
+ * Base seasonal-response traits are derived from ecology and morphology so the
+ * simulator starts from a continuous trait surface rather than from named
+ * seasonal strategy buckets.
+ */
+function deriveBaseSeasonalTraits(
+  ecology: PlantEcologyTraits,
+  morphology: PlantMorphologyTraits,
+): PlantSeasonalTraits {
+  const temperatureToleranceNorm = normalizeRange(ecology.temperatureTolerance, 0.08, 0.48);
+  const structuralMass = clamp(
+    normalizeTrait(morphology.maxHeight, MORPHOLOGY_BOUNDS.maxHeight) * 0.34 +
+      morphology.woodiness * 0.3 +
+      normalizeTrait(morphology.trunkThickness, MORPHOLOGY_BOUNDS.trunkThickness) * 0.18 +
+      morphology.crownDensity * 0.18,
+    0,
+    1,
+  );
+  const spreadingBias = clamp(
+    morphology.groundCoverFactor * 0.38 +
+      morphology.basalSpread * 0.32 +
+      morphology.lateralSpread * 0.18 +
+      (1 - morphology.clumping) * 0.12,
+    0,
+    1,
+  );
+  const stressSeasonality = clamp(
+    ecology.droughtTolerance * 0.22 +
+      (1 - ecology.moistureTolerance) * 0.24 +
+      (1 - temperatureToleranceNorm) * 0.2 +
+      (1 - ecology.vigor) * 0.12 +
+      structuralMass * 0.1 +
+      (1 - ecology.floodTolerance) * 0.12,
+    0,
+    1,
+  );
+  const leafPersistence = clamp(
+    structuralMass * 0.34 +
+      morphology.foliageDensity * 0.18 +
+      ecology.moistureTolerance * 0.12 +
+      temperatureToleranceNorm * 0.18 -
+      ecology.droughtTolerance * 0.16,
+    0,
+    1,
+  );
+
+  return {
+    dormancyTendency: clamp(stressSeasonality, 0, 1),
+    dormancyTriggerDryness: clampRange(
+      0.24 +
+        ecology.droughtTolerance * 0.34 +
+        ecology.moistureTolerance * 0.12 -
+        ecology.moisturePreference * 0.1,
+      SEASONAL_BOUNDS.dormancyTriggerDryness,
+    ),
+    dormancyTriggerColdOrLowTemperature: clampRange(
+      0.18 + (1 - ecology.optimalTemperature) * 0.32 + temperatureToleranceNorm * 0.1,
+      SEASONAL_BOUNDS.dormancyTriggerColdOrLowTemperature,
+    ),
+    resourceStorageCapacity: clamp(
+      0.18 + stressSeasonality * 0.34 + structuralMass * 0.18 + (1 - ecology.spreadAbility) * 0.12,
+      0,
+      1,
+    ),
+    reactivationSpeed: clamp(
+      0.18 + ecology.vigor * 0.32 + ecology.spreadAbility * 0.16 + spreadingBias * 0.14 - structuralMass * 0.12,
+      0,
+      1,
+    ),
+    growthWindowFlexibility: clamp(
+      ecology.moistureTolerance * 0.34 +
+        temperatureToleranceNorm * 0.38 +
+        ecology.floodTolerance * 0.12 +
+        ecology.droughtTolerance * 0.16,
+      0,
+      1,
+    ),
+    leafPersistence,
+    leafDropBias: clamp(
+      stressSeasonality * 0.44 + (1 - leafPersistence) * 0.34 + structuralMass * 0.08,
+      0,
+      1,
+    ),
+    regrowthRate: clamp(
+      0.18 +
+        ecology.vigor * 0.34 +
+        morphology.foliageDensity * 0.16 +
+        spreadingBias * 0.12 -
+        structuralMass * 0.1,
+      0,
+      1,
+    ),
+    reproductionThreshold: clampRange(
+      0.2 +
+        structuralMass * 0.28 +
+        ecology.moisturePreference * 0.08 -
+        ecology.spreadAbility * 0.12 -
+        spreadingBias * 0.08,
+      SEASONAL_BOUNDS.reproductionThreshold,
+    ),
+  };
+}
+
+function mutateSeasonal(
+  source: PlantSeasonalTraits,
+  random: () => number,
+  strength: number,
+  habitat?: HabitatPressureProfile,
+  ecology?: PlantEcologyTraits,
+  morphology?: PlantMorphologyTraits,
+): PlantSeasonalTraits {
+  const seasonal: PlantSeasonalTraits = {
+    dormancyTendency: clamp(source.dormancyTendency + signedJitter(random, strength), 0, 1),
+    dormancyTriggerDryness: clampRange(
+      source.dormancyTriggerDryness + signedJitter(random, strength * 0.7),
+      SEASONAL_BOUNDS.dormancyTriggerDryness,
+    ),
+    dormancyTriggerColdOrLowTemperature: clampRange(
+      source.dormancyTriggerColdOrLowTemperature + signedJitter(random, strength * 0.7),
+      SEASONAL_BOUNDS.dormancyTriggerColdOrLowTemperature,
+    ),
+    resourceStorageCapacity: clamp(
+      source.resourceStorageCapacity + signedJitter(random, strength),
+      0,
+      1,
+    ),
+    reactivationSpeed: clamp(source.reactivationSpeed + signedJitter(random, strength), 0, 1),
+    growthWindowFlexibility: clamp(
+      source.growthWindowFlexibility + signedJitter(random, strength),
+      0,
+      1,
+    ),
+    leafPersistence: clamp(source.leafPersistence + signedJitter(random, strength), 0, 1),
+    leafDropBias: clamp(source.leafDropBias + signedJitter(random, strength), 0, 1),
+    regrowthRate: clamp(source.regrowthRate + signedJitter(random, strength), 0, 1),
+    reproductionThreshold: clampRange(
+      source.reproductionThreshold + signedJitter(random, strength * 0.65),
+      SEASONAL_BOUNDS.reproductionThreshold,
+    ),
+  };
+
+  if (!habitat || !ecology || !morphology) {
+    return seasonal;
+  }
+
+  const temperatureToleranceNorm = normalizeRange(ecology.temperatureTolerance, 0.08, 0.48);
+  const structuralMass = clamp(
+    normalizeTrait(morphology.maxHeight, MORPHOLOGY_BOUNDS.maxHeight) * 0.36 +
+      morphology.woodiness * 0.32 +
+      morphology.crownDensity * 0.18 +
+      normalizeTrait(morphology.trunkThickness, MORPHOLOGY_BOUNDS.trunkThickness) * 0.14,
+    0,
+    1,
+  );
+  const spreadingBias = clamp(
+    morphology.groundCoverFactor * 0.38 +
+      morphology.basalSpread * 0.28 +
+      morphology.lateralSpread * 0.2 +
+      (1 - morphology.clumping) * 0.14,
+    0,
+    1,
+  );
+  const seasonalStress = clamp(
+    habitat.dryness * 0.36 +
+      (1 - habitat.temperature) * 0.24 +
+      habitat.floodProne * 0.12 +
+      (1 - habitat.fertileMoisture) * 0.16 +
+      (1 - habitat.stability) * 0.12,
+    0,
+    1,
+  );
+
+  seasonal.dormancyTendency = lerp(
+    seasonal.dormancyTendency,
+    seasonalStress * 0.62 + structuralMass * 0.12 + (1 - ecology.vigor) * 0.14,
+    0.18,
+  );
+  seasonal.dormancyTriggerDryness = lerp(
+    seasonal.dormancyTriggerDryness,
+    clamp(
+      0.18 +
+        ecology.droughtTolerance * 0.38 +
+        ecology.moistureTolerance * 0.12 +
+        habitat.fertileMoisture * 0.08 -
+        habitat.dryness * 0.08,
+      0,
+      1,
+    ),
+    0.14,
+  );
+  seasonal.dormancyTriggerColdOrLowTemperature = lerp(
+    seasonal.dormancyTriggerColdOrLowTemperature,
+    clamp(0.16 + (1 - habitat.temperature) * 0.4 + temperatureToleranceNorm * 0.12, 0, 1),
+    0.16,
+  );
+  seasonal.resourceStorageCapacity = lerp(
+    seasonal.resourceStorageCapacity,
+    clamp(
+      0.16 + seasonalStress * 0.34 + structuralMass * 0.18 + (1 - ecology.spreadAbility) * 0.12,
+      0,
+      1,
+    ),
+    0.16,
+  );
+  seasonal.reactivationSpeed = lerp(
+    seasonal.reactivationSpeed,
+    clamp(
+      0.18 +
+        ecology.vigor * 0.34 +
+        habitat.fertileMoisture * 0.18 +
+        spreadingBias * 0.14 -
+        structuralMass * 0.12,
+      0,
+      1,
+    ),
+    0.14,
+  );
+  seasonal.growthWindowFlexibility = lerp(
+    seasonal.growthWindowFlexibility,
+    clamp(
+      ecology.moistureTolerance * 0.34 +
+        temperatureToleranceNorm * 0.38 +
+        ecology.floodTolerance * 0.1 +
+        ecology.droughtTolerance * 0.18,
+      0,
+      1,
+    ),
+    0.16,
+  );
+  seasonal.leafPersistence = lerp(
+    seasonal.leafPersistence,
+    clamp(
+      structuralMass * 0.34 +
+        habitat.stability * 0.16 +
+        habitat.fertileMoisture * 0.16 +
+        ecology.moistureTolerance * 0.12 -
+        habitat.dryness * 0.16,
+      0,
+      1,
+    ),
+    0.14,
+  );
+  seasonal.leafDropBias = lerp(
+    seasonal.leafDropBias,
+    clamp(
+      seasonal.dormancyTendency * 0.46 +
+        habitat.dryness * 0.16 +
+        (1 - habitat.temperature) * 0.14 +
+        (1 - seasonal.leafPersistence) * 0.22,
+      0,
+      1,
+    ),
+    0.16,
+  );
+  seasonal.regrowthRate = lerp(
+    seasonal.regrowthRate,
+    clamp(
+      0.16 +
+        ecology.vigor * 0.36 +
+        habitat.fertileMoisture * 0.22 +
+        spreadingBias * 0.12 -
+        structuralMass * 0.1,
+      0,
+      1,
+    ),
+    0.16,
+  );
+  seasonal.reproductionThreshold = lerp(
+    seasonal.reproductionThreshold,
+    clamp(
+      0.18 +
+        structuralMass * 0.3 +
+        seasonal.resourceStorageCapacity * 0.12 -
+        ecology.spreadAbility * 0.12 -
+        spreadingBias * 0.06,
+      0.05,
+      0.95,
+    ),
+    0.14,
+  );
+
+  seasonal.dormancyTriggerDryness = clampRange(
+    seasonal.dormancyTriggerDryness,
+    SEASONAL_BOUNDS.dormancyTriggerDryness,
+  );
+  seasonal.dormancyTriggerColdOrLowTemperature = clampRange(
+    seasonal.dormancyTriggerColdOrLowTemperature,
+    SEASONAL_BOUNDS.dormancyTriggerColdOrLowTemperature,
+  );
+  seasonal.reproductionThreshold = clampRange(
+    seasonal.reproductionThreshold,
+    SEASONAL_BOUNDS.reproductionThreshold,
+  );
+
+  return seasonal;
+}
+
 function mutateMorphology(
   source: PlantMorphologyTraits,
   random: () => number,
@@ -1453,6 +1788,10 @@ function clampRange(value: number, range: readonly [number, number]): number {
 
 function normalizeTrait(value: number, range: readonly [number, number]): number {
   return clamp((value - range[0]) / Math.max(range[1] - range[0], 1e-6), 0, 1);
+}
+
+function normalizeRange(value: number, min: number, max: number): number {
+  return clamp((value - min) / Math.max(max - min, 1e-6), 0, 1);
 }
 
 function signedJitter(random: () => number, amplitude: number): number {

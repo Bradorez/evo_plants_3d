@@ -92,6 +92,8 @@ export function createControls(
   const oldestPlantValue = queryElement<HTMLElement>("oldestPlantValue");
   const plantPhenotypeValue = queryElement<HTMLElement>("plantPhenotypeValue");
   const plantPressureValue = queryElement<HTMLElement>("plantPressureValue");
+  const plantSeasonalActivityValue = queryElement<HTMLElement>("plantSeasonalActivityValue");
+  const plantSeasonalSuppressionValue = queryElement<HTMLElement>("plantSeasonalSuppressionValue");
 
   let isRunning = initialState.isRunning;
   let sandboxMode = initialState.sandboxMode;
@@ -275,6 +277,8 @@ export function createControls(
         pressureEntries.length > 0
           ? `${pressureEntries.map(([label, count]) => `${label} ${count}`).join(", ")} | maint ${summary.averageMaintenanceCost.toFixed(2)}, comp ${summary.averageCompetitionStrength.toFixed(2)}, drought ${summary.averageDroughtBurden.toFixed(2)}, flood ${summary.averageFloodSuitability.toFixed(2)}, terrain ${summary.averageTerrainStability.toFixed(2)}, spread ${summary.averageSpreadDrive.toFixed(2)}`
           : `maint ${summary.averageMaintenanceCost.toFixed(2)}, comp ${summary.averageCompetitionStrength.toFixed(2)}, drought ${summary.averageDroughtBurden.toFixed(2)}, flood ${summary.averageFloodSuitability.toFixed(2)}, terrain ${summary.averageTerrainStability.toFixed(2)}, spread ${summary.averageSpreadDrive.toFixed(2)}`;
+      plantSeasonalActivityValue.textContent = `${summary.seasonalActivitySummary} | avg activity ${summary.averageActivityLevel.toFixed(2)}, reserve ${summary.averageReserveLevel.toFixed(2)}, foliage ${summary.averageFoliageLevel.toFixed(2)}`;
+      plantSeasonalSuppressionValue.textContent = `${summary.seasonalSuppressionSummary} | dormancy ${summary.averageDormancyPressure.toFixed(2)}`;
     },
     getSandboxMode: () => sandboxMode,
     getSandboxBrushSize: () => Number(sandboxBrushInput.value),

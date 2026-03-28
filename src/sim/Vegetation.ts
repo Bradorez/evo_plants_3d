@@ -2,6 +2,11 @@ import { clamp, lerp } from "../utils/math";
 import { valueNoise2D } from "../utils/noise";
 import type { TerrainData } from "./Terrain";
 import {
+  computePlantSeasonalResponse,
+  getInitialPlantSeasonalState,
+  type PlantSeasonalitySettings,
+} from "./PlantSeasonality";
+import {
   buildHabitatPressureProfile,
   classifyPhenotype,
   createInitialSpeciesCatalog,
@@ -45,6 +50,7 @@ export interface VegetationSettings {
   morphologyTerrainStrength: number;
   morphologySpreadStrength: number;
   morphologyEstablishmentStrength: number;
+  seasonality: PlantSeasonalitySettings;
 }
 
 export interface VegetationDebugSummary {
@@ -67,6 +73,12 @@ export interface VegetationDebugSummary {
   averageFloodSuitability: number;
   averageTerrainStability: number;
   averageSpreadDrive: number;
+  averageActivityLevel: number;
+  averageReserveLevel: number;
+  averageFoliageLevel: number;
+  averageDormancyPressure: number;
+  seasonalActivitySummary: string;
+  seasonalSuppressionSummary: string;
 }
 
 /**
@@ -98,6 +110,18 @@ export class VegetationModel {
     morphologyTerrainStrength: 0.17,
     morphologySpreadStrength: 0.18,
     morphologyEstablishmentStrength: 0.16,
+    seasonality: {
+      activityResponseRate: 0.42,
+      dormancyResponseRate: 0.38,
+      foliageGrowthRate: 0.34,
+      foliageDropRate: 0.42,
+      storageGainRate: 0.26,
+      storageUseRate: 0.3,
+      dormancyStressRelief: 0.34,
+      persistenceMaintenancePenalty: 0.18,
+      reserveGrowthTradeoff: 0.34,
+      reserveSpreadBenefit: 0.28,
+    },
   };
 
   private readonly seed: number;
@@ -113,6 +137,13 @@ export class VegetationModel {
   private readonly phenotypeClass: Uint8Array;
   private readonly ageSeconds: Float32Array;
   private readonly nextAgeSeconds: Float32Array;
+  private readonly activityLevel: Float32Array;
+  private readonly nextActivityLevel: Float32Array;
+  private readonly reserveLevel: Float32Array;
+  private readonly nextReserveLevel: Float32Array;
+  private readonly foliageLevel: Float32Array;
+  private readonly nextFoliageLevel: Float32Array;
+  private readonly dormancyPressure: Float32Array;
   private readonly neighborSupport: Float32Array;
   private readonly nearbyWetness: Float32Array;
   private completedLifespanSeconds = 0;
@@ -133,6 +164,13 @@ export class VegetationModel {
     this.phenotypeClass = new Uint8Array(cellCount);
     this.ageSeconds = new Float32Array(cellCount);
     this.nextAgeSeconds = new Float32Array(cellCount);
+    this.activityLevel = new Float32Array(cellCount);
+    this.nextActivityLevel = new Float32Array(cellCount);
+    this.reserveLevel = new Float32Array(cellCount);
+    this.nextReserveLevel = new Float32Array(cellCount);
+    this.foliageLevel = new Float32Array(cellCount);
+    this.nextFoliageLevel = new Float32Array(cellCount);
+    this.dormancyPressure = new Float32Array(cellCount);
     this.neighborSupport = new Float32Array(cellCount);
     this.nearbyWetness = new Float32Array(cellCount);
   }
@@ -176,6 +214,10 @@ export class VegetationModel {
     let floodSum = 0;
     let terrainSum = 0;
     let spreadSum = 0;
+    let activitySum = 0;
+    let reserveSum = 0;
+    let foliageSum = 0;
+    let dormancySum = 0;
 
     for (let index = 0; index < this.dominantSpeciesId.length; index += 1) {
       const speciesId = this.dominantSpeciesId[index];
@@ -217,10 +259,18 @@ export class VegetationModel {
       floodSum += functionEffects.floodSuitability;
       terrainSum += functionEffects.terrainStability;
       spreadSum += functionEffects.spreadDrive;
+      activitySum += this.activityLevel[index];
+      reserveSum += this.reserveLevel[index];
+      foliageSum += this.foliageLevel[index];
+      dormancySum += this.dormancyPressure[index];
     }
 
     const dominantPhenotypeEntry = Object.entries(phenotypeCounts).sort((left, right) => right[1] - left[1])[0];
     const dominantPressureEntry = Object.entries(pressureCounts).sort((left, right) => right[1] - left[1])[0];
+    const averageActivityLevel = livingCellCount > 0 ? activitySum / livingCellCount : 0;
+    const averageReserveLevel = livingCellCount > 0 ? reserveSum / livingCellCount : 0;
+    const averageFoliageLevel = livingCellCount > 0 ? foliageSum / livingCellCount : 0;
+    const averageDormancyPressure = livingCellCount > 0 ? dormancySum / livingCellCount : 0;
 
     return {
       speciesCount: this.speciesCatalog.length,
@@ -244,6 +294,20 @@ export class VegetationModel {
       averageFloodSuitability: livingCellCount > 0 ? floodSum / livingCellCount : 0,
       averageTerrainStability: livingCellCount > 0 ? terrainSum / livingCellCount : 0,
       averageSpreadDrive: livingCellCount > 0 ? spreadSum / livingCellCount : 0,
+      averageActivityLevel,
+      averageReserveLevel,
+      averageFoliageLevel,
+      averageDormancyPressure,
+      seasonalActivitySummary: this.describeSeasonalActivity(
+        averageActivityLevel,
+        averageReserveLevel,
+        averageFoliageLevel,
+      ),
+      seasonalSuppressionSummary: this.describeSeasonalSuppression(
+        averageDormancyPressure,
+        averageReserveLevel,
+        dominantPressureEntry?.[0] ?? "mixed",
+      ),
     };
   }
 
@@ -261,6 +325,13 @@ export class VegetationModel {
     this.phenotypeClass.fill(0);
     this.ageSeconds.fill(0);
     this.nextAgeSeconds.fill(0);
+    this.activityLevel.fill(0);
+    this.nextActivityLevel.fill(0);
+    this.reserveLevel.fill(0);
+    this.nextReserveLevel.fill(0);
+    this.foliageLevel.fill(0);
+    this.nextFoliageLevel.fill(0);
+    this.dormancyPressure.fill(0);
     this.neighborSupport.fill(0);
     this.nearbyWetness.fill(0);
   }
@@ -354,6 +425,14 @@ export class VegetationModel {
 
         this.biomass[index] = initialBiomass;
         this.assignSpeciesToCell(index, selection.speciesId);
+        const species = this.speciesCatalog[selection.speciesId];
+        if (species) {
+          const seasonalState = getInitialPlantSeasonalState(species);
+          this.activityLevel[index] = seasonalState.activityLevel;
+          this.reserveLevel[index] = seasonalState.reserveLevel;
+          this.foliageLevel[index] = seasonalState.foliageLevel;
+          this.dormancyPressure[index] = seasonalState.dormancyPressure;
+        }
       }
     }
 
@@ -422,6 +501,9 @@ export class VegetationModel {
         const currentSpecies = currentSpeciesId === SPECIES_NONE ? null : this.speciesCatalog[currentSpeciesId];
         const currentBiomass = this.biomass[index];
         const currentAgeSeconds = this.ageSeconds[index];
+        const currentActivity = this.activityLevel[index];
+        const currentReserve = this.reserveLevel[index];
+        const currentFoliage = this.foliageLevel[index];
         const currentSuitability = currentSpecies
           ? this.evaluateSpeciesSuitability(
               currentSpecies,
@@ -452,10 +534,43 @@ export class VegetationModel {
           targetSuitability = environmentCandidate.score;
         }
 
+        let establishedSpeciesId = currentSpeciesId;
+        if (
+          currentSpeciesId !== SPECIES_NONE &&
+          targetSpeciesId !== SPECIES_NONE &&
+          currentSpeciesId !== targetSpeciesId &&
+          currentBiomass < 0.1
+        ) {
+          this.assignSpeciesToCell(index, targetSpeciesId);
+          establishedSpeciesId = targetSpeciesId;
+        }
+
         const activeStressSpeciesId =
-          currentSpeciesId !== SPECIES_NONE ? this.dominantSpeciesId[index] : targetSpeciesId;
+          establishedSpeciesId !== SPECIES_NONE ? establishedSpeciesId : targetSpeciesId;
         const activeStressSpecies =
           activeStressSpeciesId === SPECIES_NONE ? null : this.speciesCatalog[activeStressSpeciesId] ?? null;
+        const baseSeasonalState =
+          activeStressSpecies && activeStressSpeciesId !== currentSpeciesId
+            ? getInitialPlantSeasonalState(activeStressSpecies)
+            : {
+                activityLevel: currentActivity,
+                reserveLevel: currentReserve,
+                foliageLevel: currentFoliage,
+                dormancyPressure: this.dormancyPressure[index],
+              };
+        const seasonalResponse = activeStressSpecies
+          ? computePlantSeasonalResponse(
+              activeStressSpecies,
+              habitat,
+              baseSeasonalState.activityLevel,
+              baseSeasonalState.reserveLevel,
+              baseSeasonalState.foliageLevel,
+              growthMultiplier,
+              stressMultiplier,
+              dtSeconds,
+              this.settings.seasonality,
+            )
+          : this.getNeutralSeasonalResponse(currentActivity, currentReserve, currentFoliage);
         const morphologyEffects = activeStressSpecies
           ? deriveMorphologyEcologyEffects(activeStressSpecies)
           : this.getNeutralMorphologyEffects();
@@ -484,22 +599,39 @@ export class VegetationModel {
           1,
         );
         const droughtStress = activeStressSpecies
-          ? this.computeDroughtStress(activeStressSpecies, moisture, morphologyEffects, habitat)
+          ? this.computeDroughtStress(
+              activeStressSpecies,
+              moisture,
+              morphologyEffects,
+              habitat,
+              seasonalResponse.waterDemandScale,
+            )
           : 0;
         const floodStress = activeStressSpecies
-          ? this.computeFloodStress(activeStressSpecies, flood, standingWater, morphologyEffects)
+          ? this.computeFloodStress(
+              activeStressSpecies,
+              flood,
+              standingWater,
+              morphologyEffects,
+              seasonalResponse.stressScale,
+            )
           : 0;
         const slopeStress = activeStressSpecies
-          ? this.computeSlopeStress(activeStressSpecies, slope, morphologyEffects)
+          ? this.computeSlopeStress(
+              activeStressSpecies,
+              slope,
+              morphologyEffects,
+              seasonalResponse.stressScale,
+            )
           : 0;
 
         let nextBiomass = currentBiomass;
+        let nextActivity = 0;
+        let nextReserve = 0;
+        let nextFoliage = 0;
+        let nextDormancyPressure = 0;
 
         if (currentSpeciesId !== SPECIES_NONE && targetSpeciesId !== SPECIES_NONE) {
-          if (currentSpeciesId !== targetSpeciesId && currentBiomass < 0.1) {
-            this.assignSpeciesToCell(index, targetSpeciesId);
-          }
-
           const growthPotential = clamp(carryingCapacity - currentBiomass, 0, 1);
           const declinePressure = clamp(currentBiomass - carryingCapacity, 0, 1);
           const standingWaterStress = Math.max(
@@ -509,25 +641,42 @@ export class VegetationModel {
           const maintenancePressure =
             morphologyEffects.maintenanceCost *
             this.settings.morphologyMaintenanceStrength *
-            (0.42 + habitat.dryness * 0.34 + habitat.slope * 0.16 + standingWater * 0.08);
+            (0.42 + habitat.dryness * 0.34 + habitat.slope * 0.16 + standingWater * 0.08) *
+            seasonalResponse.maintenanceScale;
 
           nextBiomass +=
             growthPotential *
             this.settings.growthRate *
             (0.32 + support * 0.68) *
             (0.74 + morphologyPerformance * 0.16 + competitionAdvantage * 0.1) *
-            (1 - maintenancePressure * 0.42) *
+            (1 - maintenancePressure * 0.28 - seasonalResponse.storageInvestmentCost * 0.3) *
+            seasonalResponse.growthScale *
             growthMultiplier *
             this.resolveVigor(activeStressSpeciesId) *
             dtSeconds;
           nextBiomass -=
             (declinePressure * this.settings.declineRate +
               maintenancePressure +
-              droughtStress * this.settings.droughtStressStrength * stressMultiplier +
-              floodStress * this.settings.floodStressStrength * stressMultiplier +
-              slopeStress * this.settings.slopeStressStrength * lerp(stressMultiplier, 1, 0.5) +
-              standingWaterStress * 0.16) *
+              droughtStress *
+                this.settings.droughtStressStrength *
+                stressMultiplier *
+                seasonalResponse.stressScale +
+              floodStress *
+                this.settings.floodStressStrength *
+                stressMultiplier *
+                lerp(seasonalResponse.stressScale, 1, 0.35) +
+              slopeStress *
+                this.settings.slopeStressStrength *
+                lerp(stressMultiplier, 1, 0.5) *
+                lerp(seasonalResponse.stressScale, 1, 0.45) +
+              standingWaterStress * 0.16 * seasonalResponse.stressScale -
+              seasonalResponse.storageSupport * 0.12) *
             dtSeconds;
+
+          nextActivity = seasonalResponse.activityLevel;
+          nextReserve = seasonalResponse.reserveLevel;
+          nextFoliage = seasonalResponse.foliageLevel;
+          nextDormancyPressure = seasonalResponse.dormancyPressure;
         } else {
           const colonizer = neighborCandidate.speciesId !== SPECIES_NONE ? neighborCandidate : environmentCandidate;
 
@@ -546,6 +695,22 @@ export class VegetationModel {
             const colonizerEffects = colonizerSpecies
               ? deriveMorphologyEcologyEffects(colonizerSpecies)
               : this.getNeutralMorphologyEffects();
+            const colonizerInitialSeasonalState = colonizerSpecies
+              ? getInitialPlantSeasonalState(colonizerSpecies)
+              : this.getNeutralSeasonalResponse(0.42, 0.1, 0.38);
+            const colonizerSeasonalResponse = colonizerSpecies
+              ? computePlantSeasonalResponse(
+                  colonizerSpecies,
+                  habitat,
+                  colonizerInitialSeasonalState.activityLevel,
+                  colonizerInitialSeasonalState.reserveLevel,
+                  colonizerInitialSeasonalState.foliageLevel,
+                  growthMultiplier,
+                  stressMultiplier,
+                  dtSeconds,
+                  this.settings.seasonality,
+                )
+              : this.getNeutralSeasonalResponse(0.42, 0.1, 0.38);
             const spreadDrive =
               0.56 +
               colonizerEffects.spreadDrive * this.settings.morphologySpreadStrength * 1.6 -
@@ -556,6 +721,8 @@ export class VegetationModel {
               this.settings.spreadRate *
               spreadAbility *
               spreadDrive *
+              colonizerSeasonalResponse.spreadScale *
+              (0.45 + colonizerSeasonalResponse.reproductionReadiness * 0.55) *
               growthMultiplier *
               (0.58 + vigor * 0.42) *
               dtSeconds;
@@ -563,6 +730,10 @@ export class VegetationModel {
             nextBiomass = colonization;
             if (nextBiomass > 0.002) {
               this.assignSpeciesToCell(index, colonizerSpeciesId);
+              nextActivity = colonizerSeasonalResponse.activityLevel;
+              nextReserve = colonizerSeasonalResponse.reserveLevel;
+              nextFoliage = colonizerSeasonalResponse.foliageLevel;
+              nextDormancyPressure = colonizerSeasonalResponse.dormancyPressure;
             }
           }
         }
@@ -573,6 +744,10 @@ export class VegetationModel {
           nextBiomass = 0;
           this.recordCompletedLife(currentSpeciesId, currentAgeSeconds);
           this.clearCellSpecies(index);
+          nextActivity = 0;
+          nextReserve = 0;
+          nextFoliage = 0;
+          nextDormancyPressure = 0;
         }
 
         this.nextBiomass[index] = nextBiomass;
@@ -583,11 +758,18 @@ export class VegetationModel {
           nextBiomass,
           dtSeconds,
         );
+        this.nextActivityLevel[index] = nextActivity;
+        this.nextReserveLevel[index] = nextReserve;
+        this.nextFoliageLevel[index] = nextFoliage;
+        this.dormancyPressure[index] = nextDormancyPressure;
       }
     }
 
     this.biomass.set(this.nextBiomass);
     this.ageSeconds.set(this.nextAgeSeconds);
+    this.activityLevel.set(this.nextActivityLevel);
+    this.reserveLevel.set(this.nextReserveLevel);
+    this.foliageLevel.set(this.nextFoliageLevel);
     this.refreshDerivedState();
   }
 
@@ -949,6 +1131,7 @@ export class VegetationModel {
     moisture: number,
     morphologyEffects: PlantMorphologyEcologyEffects,
     habitat: HabitatPressureProfile,
+    seasonalWaterDemandScale: number,
   ): number {
     const drynessDeficit = clamp(
       (species.ecology.moisturePreference - moisture) /
@@ -965,7 +1148,13 @@ export class VegetationModel {
       1 +
       habitat.heatStress *
         (0.2 + (1 - species.ecology.heatStressResistance) * 0.5);
-    return drynessDeficit * droughtBuffer * morphologyAmplification * heatAmplification;
+    return (
+      drynessDeficit *
+      droughtBuffer *
+      morphologyAmplification *
+      heatAmplification *
+      seasonalWaterDemandScale
+    );
   }
 
   private computeFloodStress(
@@ -973,6 +1162,7 @@ export class VegetationModel {
     floodProne: number,
     standingWater: number,
     morphologyEffects: PlantMorphologyEcologyEffects,
+    seasonalStressScale: number,
   ): number {
     const floodComponent = clamp(
       (floodProne - species.ecology.floodTolerance) /
@@ -988,13 +1178,18 @@ export class VegetationModel {
     );
     const morphologyBuffer =
       1 - morphologyEffects.floodSuitability * this.settings.morphologyFloodStrength * 0.7;
-    return clamp((floodComponent * 0.7 + standingWaterComponent * 0.3) * morphologyBuffer, 0, 1);
+    return clamp(
+      (floodComponent * 0.7 + standingWaterComponent * 0.3) * morphologyBuffer * seasonalStressScale,
+      0,
+      1,
+    );
   }
 
   private computeSlopeStress(
     species: PlantSpeciesDefinition,
     slope: number,
     morphologyEffects: PlantMorphologyEcologyEffects,
+    seasonalStressScale: number,
   ): number {
     const baseStress = clamp(
       (slope - species.ecology.slopeTolerance) / Math.max(1 - species.ecology.slopeTolerance, 0.16),
@@ -1003,7 +1198,7 @@ export class VegetationModel {
     );
     const morphologyAmplification =
       1 + (1 - morphologyEffects.terrainStability) * this.settings.morphologyTerrainStrength;
-    return clamp(baseStress * morphologyAmplification, 0, 1);
+    return clamp(baseStress * morphologyAmplification * lerp(seasonalStressScale, 1, 0.4), 0, 1);
   }
 
   private getNeutralMorphologyEffects(): PlantMorphologyEcologyEffects {
@@ -1015,6 +1210,23 @@ export class VegetationModel {
       terrainStability: 0.5,
       spreadDrive: 0.5,
       establishmentCost: 0.5,
+    };
+  }
+
+  private getNeutralSeasonalResponse(activity: number, reserve: number, foliage: number) {
+    return {
+      activityLevel: activity,
+      reserveLevel: reserve,
+      foliageLevel: foliage,
+      dormancyPressure: 0,
+      maintenanceScale: 1,
+      waterDemandScale: 1,
+      growthScale: 1,
+      stressScale: 1,
+      spreadScale: 1,
+      reproductionReadiness: 0,
+      storageInvestmentCost: 0,
+      storageSupport: 0,
     };
   }
 
@@ -1075,5 +1287,37 @@ export class VegetationModel {
       0,
       1,
     );
+  }
+
+  private describeSeasonalActivity(
+    averageActivityLevel: number,
+    averageReserveLevel: number,
+    averageFoliageLevel: number,
+  ): string {
+    if (averageActivityLevel < 0.24) {
+      return `low activity, reserves ${averageReserveLevel.toFixed(2)}, foliage ${averageFoliageLevel.toFixed(2)}`;
+    }
+
+    if (averageActivityLevel < 0.52) {
+      return `reduced activity, reserves ${averageReserveLevel.toFixed(2)}, foliage ${averageFoliageLevel.toFixed(2)}`;
+    }
+
+    return `active growth, reserves ${averageReserveLevel.toFixed(2)}, foliage ${averageFoliageLevel.toFixed(2)}`;
+  }
+
+  private describeSeasonalSuppression(
+    averageDormancyPressure: number,
+    averageReserveLevel: number,
+    dominantPressure: string,
+  ): string {
+    if (averageDormancyPressure < 0.16) {
+      return `little seasonal suppression, dominant pressure ${dominantPressure}`;
+    }
+
+    if (averageReserveLevel > 0.34) {
+      return `seasonal suppression buffered by stored reserves, dominant pressure ${dominantPressure}`;
+    }
+
+    return `seasonal suppression driven by ${dominantPressure}`;
   }
 }
