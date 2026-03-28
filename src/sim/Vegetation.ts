@@ -19,7 +19,7 @@ import {
   type HabitatPressureProfile,
   type PlantMorphologyEcologyEffects,
   mutateSpecies,
-  phenotypeName,
+  summarizeMorphology,
   type PlantSpeciesDefinition,
   SPECIES_NONE,
 } from "./PlantSpecies";
@@ -63,9 +63,9 @@ export interface VegetationDebugSummary {
   averageLiveAgeSeconds: number;
   averageCompletedLifespanSeconds: number;
   oldestLiveAgeSeconds: number;
-  dominantPhenotype: string;
+  dominantLineage: string;
   dominantPressure: string;
-  phenotypeCounts: Record<string, number>;
+  lineageCounts: Record<string, number>;
   pressureCounts: Record<string, number>;
   averageMaintenanceCost: number;
   averageCompetitionStrength: number;
@@ -73,6 +73,9 @@ export interface VegetationDebugSummary {
   averageFloodSuitability: number;
   averageTerrainStability: number;
   averageSpreadDrive: number;
+  averageWoodiness: number;
+  averageStature: number;
+  averageCoverage: number;
   averageActivityLevel: number;
   averageReserveLevel: number;
   averageFoliageLevel: number;
@@ -86,7 +89,7 @@ export interface VegetationDebugSummary {
  * Cells still keep a lightweight dominant-plant state, but that state now
  * points to a species definition with separate ecological and morphology
  * traits. This keeps the growth logic readable while giving rendering a stable
- * phenotype target to visualize.
+ * species-level morphology target to visualize.
  */
 export class VegetationModel {
   public readonly settings: VegetationSettings = {
@@ -200,7 +203,7 @@ export class VegetationModel {
   }
 
   public getDebugSummary(): VegetationDebugSummary {
-    const phenotypeCounts: Record<string, number> = {};
+    const lineageCounts: Record<string, number> = {};
     const pressureCounts: Record<string, number> = {};
     const activeSpecies = new Set<number>();
     let livingCellCount = 0;
@@ -214,6 +217,9 @@ export class VegetationModel {
     let floodSum = 0;
     let terrainSum = 0;
     let spreadSum = 0;
+    let woodinessSum = 0;
+    let statureSum = 0;
+    let coverageSum = 0;
     let activitySum = 0;
     let reserveSum = 0;
     let foliageSum = 0;
@@ -230,8 +236,8 @@ export class VegetationModel {
         continue;
       }
 
-      const label = phenotypeName(species.phenotype);
-      phenotypeCounts[label] = (phenotypeCounts[label] ?? 0) + 1;
+      const lineageLabel = `S${species.id} · G${species.generation}`;
+      lineageCounts[lineageLabel] = (lineageCounts[lineageLabel] ?? 0) + 1;
       const habitat = buildHabitatPressureProfile(
         species.ecology.moisturePreference,
         species.ecology.optimalTemperature,
@@ -244,6 +250,7 @@ export class VegetationModel {
       );
       const pressureLabel = dominantHabitatPressure(habitat);
       const functionEffects = deriveMorphologyEcologyEffects(species);
+      const morphologySummary = summarizeMorphology(species);
       pressureCounts[pressureLabel] = (pressureCounts[pressureLabel] ?? 0) + 1;
       activeSpecies.add(speciesId);
       livingCellCount += 1;
@@ -259,13 +266,16 @@ export class VegetationModel {
       floodSum += functionEffects.floodSuitability;
       terrainSum += functionEffects.terrainStability;
       spreadSum += functionEffects.spreadDrive;
+      woodinessSum += morphologySummary.woodiness;
+      statureSum += morphologySummary.stature;
+      coverageSum += morphologySummary.coverage;
       activitySum += this.activityLevel[index];
       reserveSum += this.reserveLevel[index];
       foliageSum += this.foliageLevel[index];
       dormancySum += this.dormancyPressure[index];
     }
 
-    const dominantPhenotypeEntry = Object.entries(phenotypeCounts).sort((left, right) => right[1] - left[1])[0];
+    const dominantLineageEntry = Object.entries(lineageCounts).sort((left, right) => right[1] - left[1])[0];
     const dominantPressureEntry = Object.entries(pressureCounts).sort((left, right) => right[1] - left[1])[0];
     const averageActivityLevel = livingCellCount > 0 ? activitySum / livingCellCount : 0;
     const averageReserveLevel = livingCellCount > 0 ? reserveSum / livingCellCount : 0;
@@ -284,9 +294,9 @@ export class VegetationModel {
       averageCompletedLifespanSeconds:
         this.completedLives > 0 ? this.completedLifespanSeconds / this.completedLives : 0,
       oldestLiveAgeSeconds,
-      dominantPhenotype: dominantPhenotypeEntry?.[0] ?? "none",
+      dominantLineage: dominantLineageEntry?.[0] ?? "none",
       dominantPressure: dominantPressureEntry?.[0] ?? "mixed",
-      phenotypeCounts,
+      lineageCounts,
       pressureCounts,
       averageMaintenanceCost: livingCellCount > 0 ? maintenanceSum / livingCellCount : 0,
       averageCompetitionStrength: livingCellCount > 0 ? competitionSum / livingCellCount : 0,
@@ -294,6 +304,9 @@ export class VegetationModel {
       averageFloodSuitability: livingCellCount > 0 ? floodSum / livingCellCount : 0,
       averageTerrainStability: livingCellCount > 0 ? terrainSum / livingCellCount : 0,
       averageSpreadDrive: livingCellCount > 0 ? spreadSum / livingCellCount : 0,
+      averageWoodiness: livingCellCount > 0 ? woodinessSum / livingCellCount : 0,
+      averageStature: livingCellCount > 0 ? statureSum / livingCellCount : 0,
+      averageCoverage: livingCellCount > 0 ? coverageSum / livingCellCount : 0,
       averageActivityLevel,
       averageReserveLevel,
       averageFoliageLevel,

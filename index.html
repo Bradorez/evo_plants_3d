@@ -102,7 +102,7 @@
               id="simulationSpeedInput"
               type="range"
               min="0.25"
-              max="6"
+              max="10"
               step="0.25"
               value="1"
             />
@@ -159,6 +159,10 @@
             <strong id="seasonValue">Early Spring</strong>
           </div>
           <div>
+            <span class="stat-label">Season Phase</span>
+            <strong id="seasonPhaseValue">0.00</strong>
+          </div>
+          <div>
             <span class="stat-label">Rain Mult</span>
             <strong id="seasonRainValue">1.00x</strong>
           </div>
@@ -199,7 +203,7 @@
               <strong id="averagePlantBiomassValue">0.00</strong>
             </div>
             <div>
-              <span class="stat-label">Dominant Form</span>
+              <span class="stat-label">Top Lineage</span>
               <strong id="dominantPhenotypeValue">none</strong>
             </div>
             <div>
@@ -218,8 +222,16 @@
               <span class="stat-label">Oldest Live</span>
               <strong id="oldestPlantValue">0.0 s</strong>
             </div>
+            <div>
+              <span class="stat-label">Avg Activity</span>
+              <strong id="averagePlantActivityValue">0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Avg Dormancy</span>
+              <strong id="averagePlantDormancyValue">0.00</strong>
+            </div>
           </div>
-          <div class="debug-copy" id="plantPhenotypeValue">no established plant forms</div>
+          <div class="debug-copy" id="plantPhenotypeValue">no established lineages</div>
           <div class="debug-copy" id="plantPressureValue">pressure mix unavailable</div>
           <div class="debug-copy" id="plantSeasonalActivityValue">seasonal activity unavailable</div>
           <div class="debug-copy" id="plantSeasonalSuppressionValue">seasonal suppression unavailable</div>

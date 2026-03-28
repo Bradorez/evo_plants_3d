@@ -136,13 +136,6 @@ export interface PlantRenderParameters {
   descriptiveLabel: string;
 }
 
-interface SpeciesTemplate {
-  label: string;
-  ecologyProfile: number;
-  ecology: PlantEcologyTraits;
-  morphology: PlantMorphologyTraits;
-}
-
 export interface PlantMorphologyDebugSummary {
   label: string;
   woodiness: number;
@@ -248,12 +241,12 @@ export const MORPHOLOGY_ECOLOGY_SETTINGS = {
  * pressure independently.
  */
 export function createInitialSpeciesCatalog(seed: number): PlantSpeciesDefinition[] {
-  const templates = createTemplates();
+  const initialSpeciesCount = 10;
 
-  return templates.map((template, index) => {
+  return Array.from({ length: initialSpeciesCount }, (_, index) => {
     const random = createSeededRandom(seed + index * 731);
-    const ecology = mutateEcology(template.ecology, random, 0.08);
-    const morphology = mutateMorphology(template.morphology, random, 0.09);
+    const ecology = createSeedEcology(seed, index, initialSpeciesCount, random);
+    const morphology = createSeedMorphology(seed, index, initialSpeciesCount, random, ecology);
     const seasonal = mutateSeasonal(
       deriveBaseSeasonalTraits(ecology, morphology),
       random,
@@ -268,8 +261,8 @@ export function createInitialSpeciesCatalog(seed: number): PlantSpeciesDefinitio
       id: index,
       parentId: null,
       generation: 0,
-      name: `${template.label} ${index + 1}`,
-      ecologyProfile: template.ecologyProfile,
+      name: `Species ${index + 1}`,
+      ecologyProfile: classifyEcologyProfile(ecology),
       ecology,
       morphology,
       seasonal,
@@ -845,331 +838,189 @@ export function phenotypeName(phenotype: PlantPhenotypeClass): string {
   }
 }
 
-function createTemplates(): SpeciesTemplate[] {
-  return [
-    {
-      label: "Grass",
-      ecologyProfile: ECOLOGY_PROFILE_DRYLAND,
-      ecology: {
-        moisturePreference: 0.26,
-        moistureTolerance: 0.34,
-        persistentWetnessPreference: 0.2,
-        floodTolerance: 0.22,
-        standingWaterTolerance: 0.06,
-        droughtTolerance: 0.78,
-        optimalTemperature: 0.68,
-        temperatureTolerance: 0.26,
-        heatStressResistance: 0.72,
-        slopeTolerance: 0.78,
-        spreadAbility: 0.72,
-        vigor: 0.68,
-      },
-      morphology: {
-        maxHeight: 0.55,
-        woodiness: 0.06,
-        stemCount: 5,
-        trunkThickness: 0.03,
-        apicalDominance: 0.18,
-        branchDensity: 0.12,
-        branchingRate: 0.08,
-        branchAngle: 0.62,
-        crownWidth: 0.48,
-        crownHeight: 0.32,
-        verticalBias: 0.78,
-        lateralSpread: 0.48,
-        crownDensity: 0.18,
-        crownRadius: 0.42,
-        topFoliageBias: 0.24,
-        basalSpread: 0.74,
-        foliageDensity: 0.72,
-        leafSize: 0.12,
-        leafAspectRatio: 3.8,
-        leafDensity: 0.72,
-        leafType: PlantLeafType.Blade,
-        floweriness: 0.08,
-        topCanopyBias: 0.18,
-        groundCoverFactor: 0.84,
-        uprightness: 0.74,
-        clumping: 0.58,
-      },
-    },
-    {
-      label: "Herb",
-      ecologyProfile: ECOLOGY_PROFILE_MESIC,
-      ecology: {
-        moisturePreference: 0.48,
-        moistureTolerance: 0.28,
-        persistentWetnessPreference: 0.38,
-        floodTolerance: 0.32,
-        standingWaterTolerance: 0.08,
-        droughtTolerance: 0.36,
-        optimalTemperature: 0.58,
-        temperatureTolerance: 0.22,
-        heatStressResistance: 0.42,
-        slopeTolerance: 0.54,
-        spreadAbility: 0.56,
-        vigor: 0.58,
-      },
-      morphology: {
-        maxHeight: 0.9,
-        woodiness: 0.12,
-        stemCount: 3,
-        trunkThickness: 0.04,
-        apicalDominance: 0.32,
-        branchDensity: 0.24,
-        branchingRate: 0.22,
-        branchAngle: 0.78,
-        crownWidth: 0.42,
-        crownHeight: 0.5,
-        verticalBias: 0.62,
-        lateralSpread: 0.38,
-        crownDensity: 0.32,
-        crownRadius: 0.44,
-        topFoliageBias: 0.42,
-        basalSpread: 0.42,
-        foliageDensity: 0.56,
-        leafSize: 0.22,
-        leafAspectRatio: 1.6,
-        leafDensity: 0.5,
-        leafType: PlantLeafType.Broad,
-        floweriness: 0.7,
-        topCanopyBias: 0.42,
-        groundCoverFactor: 0.44,
-        uprightness: 0.62,
-        clumping: 0.44,
-      },
-    },
-    {
-      label: "Shrub",
-      ecologyProfile: ECOLOGY_PROFILE_MESIC,
-      ecology: {
-        moisturePreference: 0.42,
-        moistureTolerance: 0.24,
-        persistentWetnessPreference: 0.34,
-        floodTolerance: 0.24,
-        standingWaterTolerance: 0.06,
-        droughtTolerance: 0.54,
-        optimalTemperature: 0.56,
-        temperatureTolerance: 0.2,
-        heatStressResistance: 0.5,
-        slopeTolerance: 0.56,
-        spreadAbility: 0.42,
-        vigor: 0.64,
-      },
-      morphology: {
-        maxHeight: 1.9,
-        woodiness: 0.58,
-        stemCount: 4,
-        trunkThickness: 0.08,
-        apicalDominance: 0.34,
-        branchDensity: 0.58,
-        branchingRate: 0.52,
-        branchAngle: 0.82,
-        crownWidth: 1.2,
-        crownHeight: 0.92,
-        verticalBias: 0.46,
-        lateralSpread: 0.72,
-        crownDensity: 0.58,
-        crownRadius: 1.04,
-        topFoliageBias: 0.38,
-        basalSpread: 0.64,
-        foliageDensity: 0.68,
-        leafSize: 0.2,
-        leafAspectRatio: 1.3,
-        leafDensity: 0.72,
-        leafType: PlantLeafType.Broad,
-        floweriness: 0.14,
-        topCanopyBias: 0.46,
-        groundCoverFactor: 0.34,
-        uprightness: 0.52,
-        clumping: 0.62,
-      },
-    },
-    {
-      label: "Broadleaf",
-      ecologyProfile: ECOLOGY_PROFILE_MESIC,
-      ecology: {
-        moisturePreference: 0.46,
-        moistureTolerance: 0.22,
-        persistentWetnessPreference: 0.36,
-        floodTolerance: 0.2,
-        standingWaterTolerance: 0.05,
-        droughtTolerance: 0.42,
-        optimalTemperature: 0.5,
-        temperatureTolerance: 0.18,
-        heatStressResistance: 0.38,
-        slopeTolerance: 0.5,
-        spreadAbility: 0.3,
-        vigor: 0.62,
-      },
-      morphology: {
-        maxHeight: 7.4,
-        woodiness: 0.86,
-        stemCount: 1,
-        trunkThickness: 0.22,
-        apicalDominance: 0.72,
-        branchDensity: 0.7,
-        branchingRate: 0.64,
-        branchAngle: 0.68,
-        crownWidth: 2.7,
-        crownHeight: 2.3,
-        verticalBias: 0.74,
-        lateralSpread: 0.68,
-        crownDensity: 0.74,
-        crownRadius: 2.5,
-        topFoliageBias: 0.62,
-        basalSpread: 0.18,
-        foliageDensity: 0.82,
-        leafSize: 0.3,
-        leafAspectRatio: 1.1,
-        leafDensity: 0.82,
-        leafType: PlantLeafType.Broad,
-        floweriness: 0.06,
-        topCanopyBias: 0.56,
-        groundCoverFactor: 0.12,
-        uprightness: 0.82,
-        clumping: 0.24,
-      },
-    },
-    {
-      label: "Conifer",
-      ecologyProfile: ECOLOGY_PROFILE_DRYLAND,
-      ecology: {
-        moisturePreference: 0.34,
-        moistureTolerance: 0.2,
-        persistentWetnessPreference: 0.24,
-        floodTolerance: 0.12,
-        standingWaterTolerance: 0.04,
-        droughtTolerance: 0.64,
-        optimalTemperature: 0.42,
-        temperatureTolerance: 0.22,
-        heatStressResistance: 0.54,
-        slopeTolerance: 0.68,
-        spreadAbility: 0.28,
-        vigor: 0.56,
-      },
-      morphology: {
-        maxHeight: 8.2,
-        woodiness: 0.9,
-        stemCount: 1,
-        trunkThickness: 0.18,
-        apicalDominance: 0.84,
-        branchDensity: 0.52,
-        branchingRate: 0.44,
-        branchAngle: 0.38,
-        crownWidth: 1.8,
-        crownHeight: 3.4,
-        verticalBias: 0.88,
-        lateralSpread: 0.3,
-        crownDensity: 0.68,
-        crownRadius: 1.6,
-        topFoliageBias: 0.82,
-        basalSpread: 0.12,
-        foliageDensity: 0.84,
-        leafSize: 0.1,
-        leafAspectRatio: 4.2,
-        leafDensity: 0.86,
-        leafType: PlantLeafType.Needle,
-        floweriness: 0.02,
-        topCanopyBias: 0.74,
-        groundCoverFactor: 0.08,
-        uprightness: 0.88,
-        clumping: 0.18,
-      },
-    },
-    {
-      label: "Palm",
-      ecologyProfile: ECOLOGY_PROFILE_MESIC,
-      ecology: {
-        moisturePreference: 0.58,
-        moistureTolerance: 0.18,
-        persistentWetnessPreference: 0.42,
-        floodTolerance: 0.36,
-        standingWaterTolerance: 0.12,
-        droughtTolerance: 0.34,
-        optimalTemperature: 0.72,
-        temperatureTolerance: 0.16,
-        heatStressResistance: 0.48,
-        slopeTolerance: 0.34,
-        spreadAbility: 0.22,
-        vigor: 0.52,
-      },
-      morphology: {
-        maxHeight: 6.5,
-        woodiness: 0.74,
-        stemCount: 1,
-        trunkThickness: 0.16,
-        apicalDominance: 0.92,
-        branchDensity: 0.18,
-        branchingRate: 0.1,
-        branchAngle: 1.02,
-        crownWidth: 2.2,
-        crownHeight: 1.1,
-        verticalBias: 0.96,
-        lateralSpread: 0.78,
-        crownDensity: 0.34,
-        crownRadius: 2.1,
-        topFoliageBias: 0.94,
-        basalSpread: 0.1,
-        foliageDensity: 0.56,
-        leafSize: 0.8,
-        leafAspectRatio: 4.6,
-        leafDensity: 0.56,
-        leafType: PlantLeafType.Frond,
-        floweriness: 0.08,
-        topCanopyBias: 0.92,
-        groundCoverFactor: 0.08,
-        uprightness: 0.92,
-        clumping: 0.16,
-      },
-    },
-    {
-      label: "Reed",
-      ecologyProfile: ECOLOGY_PROFILE_WETLAND,
-      ecology: {
-        moisturePreference: 0.78,
-        moistureTolerance: 0.28,
-        persistentWetnessPreference: 0.82,
-        floodTolerance: 0.84,
-        standingWaterTolerance: 0.44,
-        droughtTolerance: 0.12,
-        optimalTemperature: 0.64,
-        temperatureTolerance: 0.24,
-        heatStressResistance: 0.62,
-        slopeTolerance: 0.38,
-        spreadAbility: 0.64,
-        vigor: 0.54,
-      },
-      morphology: {
-        maxHeight: 1.45,
-        woodiness: 0.1,
-        stemCount: 6,
-        trunkThickness: 0.03,
-        apicalDominance: 0.64,
-        branchDensity: 0.1,
-        branchingRate: 0.06,
-        branchAngle: 0.3,
-        crownWidth: 0.38,
-        crownHeight: 0.8,
-        verticalBias: 0.94,
-        lateralSpread: 0.22,
-        crownDensity: 0.18,
-        crownRadius: 0.32,
-        topFoliageBias: 0.86,
-        basalSpread: 0.48,
-        foliageDensity: 0.62,
-        leafSize: 0.18,
-        leafAspectRatio: 4.1,
-        leafDensity: 0.62,
-        leafType: PlantLeafType.Reed,
-        floweriness: 0.02,
-        topCanopyBias: 0.82,
-        groundCoverFactor: 0.66,
-        uprightness: 0.92,
-        clumping: 0.52,
-      },
-    },
-  ];
+function createSeedEcology(
+  seed: number,
+  index: number,
+  total: number,
+  random: () => number,
+): PlantEcologyTraits {
+  const moistureAxis = sampleTraitAxis(index, total, 0.07, random);
+  const warmthAxis = sampleTraitAxis(index * 3 + 1, total, 0.08, random);
+  const floodAxis = sampleTraitAxis(index * 5 + 2, total, 0.08, random);
+  const toleranceAxis = sampleTraitAxis(index * 7 + 3, total, 0.08, random);
+  const vigorAxis = sampleTraitAxis(index * 11 + 5, total, 0.08, random);
+  const spreadAxis = sampleTraitAxis(index * 13 + 8, total, 0.08, random);
+  const slopeAxis = sampleTraitAxis(index * 17 + 13, total, 0.08, random);
+  const idNoise = createSeededRandom(seed + index * 4099);
+
+  const moisturePreference = clamp(0.12 + moistureAxis * 0.76, 0, 1);
+  const floodTolerance = clamp(0.06 + floodAxis * 0.84, 0, 1);
+  const standingWaterTolerance = clamp(
+    floodTolerance * (0.18 + floodAxis * 0.42) + signedJitter(idNoise, 0.04),
+    0,
+    1,
+  );
+  const moistureTolerance = clamp(0.12 + toleranceAxis * 0.28, 0.08, 0.48);
+  const droughtTolerance = clamp(
+    0.08 + (1 - moistureAxis) * 0.62 + toleranceAxis * 0.18,
+    0,
+    1,
+  );
+  const optimalTemperature = clamp(0.14 + warmthAxis * 0.72, 0, 1);
+  const temperatureTolerance = clamp(0.12 + toleranceAxis * 0.24, 0.08, 0.48);
+  const persistentWetnessPreference = clamp(
+    moisturePreference * 0.68 + floodTolerance * 0.18 + signedJitter(idNoise, 0.05),
+    0,
+    1,
+  );
+
+  return {
+    moisturePreference,
+    moistureTolerance,
+    persistentWetnessPreference,
+    floodTolerance,
+    standingWaterTolerance,
+    droughtTolerance,
+    optimalTemperature,
+    temperatureTolerance,
+    heatStressResistance: clamp(0.14 + warmthAxis * 0.46 + droughtTolerance * 0.18, 0, 1),
+    slopeTolerance: clamp(0.16 + slopeAxis * 0.72, 0.1, 1),
+    spreadAbility: clamp(0.12 + spreadAxis * 0.72, 0.08, 1),
+    vigor: clamp(0.18 + vigorAxis * 0.68, 0.1, 1),
+  };
+}
+
+function createSeedMorphology(
+  seed: number,
+  index: number,
+  total: number,
+  random: () => number,
+  ecology: PlantEcologyTraits,
+): PlantMorphologyTraits {
+  const statureAxis = sampleTraitAxis(index * 2 + 1, total, 0.08, random);
+  const woodAxis = sampleTraitAxis(index * 3 + 2, total, 0.08, random);
+  const verticalAxis = sampleTraitAxis(index * 5 + 3, total, 0.08, random);
+  const spreadAxis = sampleTraitAxis(index * 7 + 4, total, 0.08, random);
+  const foliageAxis = sampleTraitAxis(index * 11 + 5, total, 0.08, random);
+  const clumpAxis = sampleTraitAxis(index * 13 + 6, total, 0.08, random);
+  const branchAxis = sampleTraitAxis(index * 17 + 7, total, 0.08, random);
+  const leafAxis = sampleTraitAxis(index * 19 + 9, total, 0.08, random);
+  const localRandom = createSeededRandom(seed + index * 8191 + 17);
+
+  const wetBias = ecology.floodTolerance * 0.42 + ecology.persistentWetnessPreference * 0.18;
+  const dryBias = ecology.droughtTolerance * 0.3 + (1 - ecology.moisturePreference) * 0.2;
+  const woodiness = clamp(woodAxis * 0.72 + statureAxis * 0.14 - wetBias * 0.14, 0, 1);
+  const groundCoverFactor = clamp(
+    spreadAxis * 0.46 + (1 - woodiness) * 0.18 + dryBias * 0.16 + wetBias * 0.08,
+    0,
+    1,
+  );
+  const lateralSpread = clamp(spreadAxis * 0.64 + groundCoverFactor * 0.12, 0, 1);
+  const verticalBias = clamp(verticalAxis * 0.68 + woodiness * 0.1 + wetBias * 0.06, 0, 1);
+  const stemCount = clampRange(
+    1 + (1 - woodiness) * 3.4 + groundCoverFactor * 1.6 + signedJitter(localRandom, 1.1),
+    MORPHOLOGY_BOUNDS.stemCount,
+  );
+  const leafType = sampleLeafType(index, total, ecology, woodiness, verticalBias, spreadAxis, localRandom);
+  const crownRadius = clampRange(
+    0.14 +
+      spreadAxis * 2.8 +
+      woodiness * 1.2 +
+      groundCoverFactor * 0.8 -
+      verticalBias * 0.55,
+    MORPHOLOGY_BOUNDS.crownRadius,
+  );
+  const maxHeight = clampRange(
+    0.3 +
+      statureAxis * 8.8 +
+      woodiness * 2.2 +
+      verticalBias * 0.9 -
+      groundCoverFactor * 0.6 -
+      wetBias * 0.4,
+    MORPHOLOGY_BOUNDS.maxHeight,
+  );
+
+  return {
+    maxHeight,
+    woodiness,
+    stemCount,
+    trunkThickness: clampRange(
+      0.03 + woodiness * 0.28 + normalizeTrait(maxHeight, MORPHOLOGY_BOUNDS.maxHeight) * 0.14,
+      MORPHOLOGY_BOUNDS.trunkThickness,
+    ),
+    apicalDominance: clamp(verticalBias * 0.56 + woodiness * 0.18 + (1 - groundCoverFactor) * 0.12, 0, 1),
+    branchDensity: clamp(branchAxis * 0.72 + woodiness * 0.12, 0, 1),
+    branchingRate: clamp(branchAxis * 0.64 + spreadAxis * 0.14 + (1 - verticalBias) * 0.1, 0, 1),
+    branchAngle: clampRange(
+      0.16 + (1 - verticalBias) * 0.62 + spreadAxis * 0.22,
+      MORPHOLOGY_BOUNDS.branchAngle,
+    ),
+    crownWidth: clampRange(crownRadius * (0.7 + spreadAxis * 0.45), MORPHOLOGY_BOUNDS.crownWidth),
+    crownHeight: clampRange(
+      0.12 + normalizeTrait(maxHeight, MORPHOLOGY_BOUNDS.maxHeight) * 2.8 + verticalBias * 1.1 + woodiness * 0.6,
+      MORPHOLOGY_BOUNDS.crownHeight,
+    ),
+    verticalBias,
+    lateralSpread,
+    crownDensity: clamp(foliageAxis * 0.58 + branchAxis * 0.22 + woodiness * 0.08, 0, 1),
+    crownRadius,
+    topFoliageBias: clamp(verticalBias * 0.48 + woodiness * 0.14 + wetBias * 0.1, 0, 1),
+    basalSpread: clamp(groundCoverFactor * 0.58 + spreadAxis * 0.22 + (1 - woodiness) * 0.1, 0, 1),
+    foliageDensity: clamp(foliageAxis * 0.68 + ecology.vigor * 0.12, 0, 1),
+    leafSize: clampRange(0.06 + leafAxis * 0.62 + ecology.moisturePreference * 0.22, MORPHOLOGY_BOUNDS.leafSize),
+    leafAspectRatio: clampRange(
+      0.38 +
+        verticalBias * 2.6 +
+        (leafType === PlantLeafType.Needle || leafType === PlantLeafType.Reed ? 1.4 : 0) +
+        (leafType === PlantLeafType.Frond ? 1.1 : 0),
+      MORPHOLOGY_BOUNDS.leafAspectRatio,
+    ),
+    leafDensity: clamp(foliageAxis * 0.62 + (1 - woodiness) * 0.08, 0, 1),
+    leafType,
+    floweriness: clamp((1 - woodiness) * 0.34 + (1 - ecology.floodTolerance) * 0.12 + signedJitter(localRandom, 0.12), 0, 1),
+    topCanopyBias: clamp(verticalBias * 0.44 + woodiness * 0.12 + wetBias * 0.14, 0, 1),
+    groundCoverFactor,
+    uprightness: clamp(verticalBias * 0.62 + wetBias * 0.14 + (1 - spreadAxis) * 0.08, 0, 1),
+    clumping: clamp(clumpAxis * 0.7 + wetBias * 0.08, 0, 1),
+  };
+}
+
+function sampleTraitAxis(index: number, total: number, jitter: number, random: () => number): number {
+  const normalized = (((index % total) + 0.5) / Math.max(total, 1)) % 1;
+  return clamp(normalized + signedJitter(random, jitter), 0, 1);
+}
+
+function sampleLeafType(
+  index: number,
+  total: number,
+  ecology: PlantEcologyTraits,
+  woodiness: number,
+  verticalBias: number,
+  spreadAxis: number,
+  random: () => number,
+): PlantLeafType {
+  const selector = ((((index * 7) % total) + 0.5) / Math.max(total, 1) + random() * 0.08) % 1;
+
+  if (ecology.floodTolerance > 0.68 && verticalBias > 0.64) {
+    return selector > 0.55 ? PlantLeafType.Reed : PlantLeafType.Blade;
+  }
+  if (woodiness > 0.72 && verticalBias > 0.72 && selector > 0.66) {
+    return PlantLeafType.Needle;
+  }
+  if (woodiness > 0.48 && spreadAxis > 0.58 && selector > 0.82) {
+    return PlantLeafType.Frond;
+  }
+  if (selector < 0.22) {
+    return PlantLeafType.Blade;
+  }
+  if (selector < 0.68) {
+    return PlantLeafType.Broad;
+  }
+  if (selector < 0.86) {
+    return PlantLeafType.Needle;
+  }
+
+  return selector < 0.93 ? PlantLeafType.Frond : PlantLeafType.Reed;
 }
 
 function mutateEcology(

@@ -76,6 +76,7 @@ export function createControls(
   const peakFlowValue = queryElement<HTMLElement>("peakFlowValue");
   const waterSourceCountValue = queryElement<HTMLElement>("waterSourceCountValue");
   const seasonValue = queryElement<HTMLElement>("seasonValue");
+  const seasonPhaseValue = queryElement<HTMLElement>("seasonPhaseValue");
   const seasonRainValue = queryElement<HTMLElement>("seasonRainValue");
   const seasonTempValue = queryElement<HTMLElement>("seasonTempValue");
   const seasonEvapValue = queryElement<HTMLElement>("seasonEvapValue");
@@ -90,6 +91,8 @@ export function createControls(
   const averagePlantAgeValue = queryElement<HTMLElement>("averagePlantAgeValue");
   const averagePlantLifespanValue = queryElement<HTMLElement>("averagePlantLifespanValue");
   const oldestPlantValue = queryElement<HTMLElement>("oldestPlantValue");
+  const averagePlantActivityValue = queryElement<HTMLElement>("averagePlantActivityValue");
+  const averagePlantDormancyValue = queryElement<HTMLElement>("averagePlantDormancyValue");
   const plantPhenotypeValue = queryElement<HTMLElement>("plantPhenotypeValue");
   const plantPressureValue = queryElement<HTMLElement>("plantPressureValue");
   const plantSeasonalActivityValue = queryElement<HTMLElement>("plantSeasonalActivityValue");
@@ -248,12 +251,13 @@ export function createControls(
       peakFlowValue.textContent = stats.peakFlow.toFixed(3);
       waterSourceCountValue.textContent = stats.activeWaterSources.toString();
       seasonValue.textContent = stats.seasonLabel;
+      seasonPhaseValue.textContent = stats.seasonPhase.toFixed(2);
       seasonRainValue.textContent = `${stats.rainfallMultiplier.toFixed(2)}x`;
       seasonTempValue.textContent = `${stats.temperatureOffset >= 0 ? "+" : ""}${stats.temperatureOffset.toFixed(2)}`;
       seasonEvapValue.textContent = `${stats.evaporationMultiplier.toFixed(2)}x`;
     },
     setVegetationDebug: (summary: VegetationDebugSummary) => {
-      const entries = Object.entries(summary.phenotypeCounts).sort((left, right) => right[1] - left[1]);
+      const entries = Object.entries(summary.lineageCounts).sort((left, right) => right[1] - left[1]);
       const pressureEntries = Object.entries(summary.pressureCounts).sort((left, right) => right[1] - left[1]);
       plantSpeciesValue.textContent = summary.speciesCount.toString();
       activePlantSpeciesValue.textContent = summary.activeSpeciesCount.toString();
@@ -261,7 +265,7 @@ export function createControls(
       plantCoverageValue.textContent = `${summary.occupiedPercent.toFixed(1)}%`;
       densePlantCellsValue.textContent = summary.denseCellCount.toString();
       averagePlantBiomassValue.textContent = summary.averageBiomass.toFixed(2);
-      dominantPhenotypeValue.textContent = summary.dominantPhenotype;
+      dominantPhenotypeValue.textContent = summary.dominantLineage;
       dominantPressureValue.textContent = summary.dominantPressure;
       averagePlantAgeValue.textContent = `${summary.averageLiveAgeSeconds.toFixed(1)} s`;
       averagePlantLifespanValue.textContent =
@@ -269,10 +273,15 @@ export function createControls(
           ? `${summary.averageCompletedLifespanSeconds.toFixed(1)} s`
           : "n/a";
       oldestPlantValue.textContent = `${summary.oldestLiveAgeSeconds.toFixed(1)} s`;
+      averagePlantActivityValue.textContent = summary.averageActivityLevel.toFixed(2);
+      averagePlantDormancyValue.textContent = summary.averageDormancyPressure.toFixed(2);
       plantPhenotypeValue.textContent =
         entries.length > 0
-          ? entries.map(([label, count]) => `${label} ${count}`).join(", ")
-          : "no established plant forms";
+          ? `${entries
+              .slice(0, 4)
+              .map(([label, count]) => `${label} ${count}`)
+              .join(", ")} | wood ${summary.averageWoodiness.toFixed(2)}, stature ${summary.averageStature.toFixed(2)}, cover ${summary.averageCoverage.toFixed(2)}`
+          : `no established lineages | wood ${summary.averageWoodiness.toFixed(2)}, stature ${summary.averageStature.toFixed(2)}, cover ${summary.averageCoverage.toFixed(2)}`;
       plantPressureValue.textContent =
         pressureEntries.length > 0
           ? `${pressureEntries.map(([label, count]) => `${label} ${count}`).join(", ")} | maint ${summary.averageMaintenanceCost.toFixed(2)}, comp ${summary.averageCompetitionStrength.toFixed(2)}, drought ${summary.averageDroughtBurden.toFixed(2)}, flood ${summary.averageFloodSuitability.toFixed(2)}, terrain ${summary.averageTerrainStability.toFixed(2)}, spread ${summary.averageSpreadDrive.toFixed(2)}`
