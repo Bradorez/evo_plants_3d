@@ -7,14 +7,6 @@ export const ECOLOGY_PROFILE_WETLAND = 2;
 
 export const SPECIES_NONE = 65535;
 
-export enum PlantLeafType {
-  Blade = 0,
-  Broad = 1,
-  Needle = 2,
-  Frond = 3,
-  Reed = 4,
-}
-
 export enum PlantPhenotypeClass {
   Grass = 0,
   FloweringHerb = 1,
@@ -59,9 +51,20 @@ export interface PlantMorphologyTraits {
   basalSpread: number;
   foliageDensity: number;
   leafSize: number;
+  leafLength: number;
+  leafWidth: number;
+  leafThickness: number;
   leafAspectRatio: number;
   leafDensity: number;
-  leafType: PlantLeafType;
+  leafCurvature: number;
+  leafDroop: number;
+  leafClusterDensity: number;
+  leafClusterRadius: number;
+  foliagePatchiness: number;
+  foliageVerticalDistribution: number;
+  foliageTipBias: number;
+  foliageBasalBias: number;
+  foliageAttachmentSpread: number;
   floweriness: number;
   topCanopyBias: number;
   groundCoverFactor: number;
@@ -130,7 +133,17 @@ export interface PlantRenderParameters {
   foliageLateralSpread: number;
   leafLength: number;
   leafWidth: number;
+  leafThickness: number;
   leafTilt: number;
+  leafCurvature: number;
+  leafDroop: number;
+  leafClusterDensity: number;
+  leafClusterRadius: number;
+  foliagePatchiness: number;
+  foliageVerticalDistribution: number;
+  foliageTipBias: number;
+  foliageBasalBias: number;
+  foliageAttachmentSpread: number;
   flowerAmount: number;
   groundPatchScale: number;
   descriptiveLabel: string;
@@ -156,6 +169,24 @@ export interface PlantMorphologyEcologyEffects {
   establishmentCost: number;
 }
 
+interface PlantFoliageMetrics {
+  lengthNorm: number;
+  widthNorm: number;
+  thicknessNorm: number;
+  density: number;
+  slenderness: number;
+  droopiness: number;
+  curvature: number;
+  clustering: number;
+  clusterRadius: number;
+  patchiness: number;
+  verticalDistribution: number;
+  tipBias: number;
+  basalBias: number;
+  attachmentSpread: number;
+  canopyMass: number;
+}
+
 export const MORPHOLOGY_BOUNDS = {
   maxHeight: [0.2, 15] as const,
   woodiness: [0, 1] as const,
@@ -175,8 +206,20 @@ export const MORPHOLOGY_BOUNDS = {
   basalSpread: [0, 1] as const,
   foliageDensity: [0, 1] as const,
   leafSize: [0.03, 1.4] as const,
+  leafLength: [0.03, 2.1] as const,
+  leafWidth: [0.012, 1.2] as const,
+  leafThickness: [0.006, 0.28] as const,
   leafAspectRatio: [0.2, 5] as const,
   leafDensity: [0, 1] as const,
+  leafCurvature: [0, 1] as const,
+  leafDroop: [0, 1] as const,
+  leafClusterDensity: [0, 1] as const,
+  leafClusterRadius: [0, 1] as const,
+  foliagePatchiness: [0, 1] as const,
+  foliageVerticalDistribution: [0, 1] as const,
+  foliageTipBias: [0, 1] as const,
+  foliageBasalBias: [0, 1] as const,
+  foliageAttachmentSpread: [0, 1] as const,
   floweriness: [0, 1] as const,
   topCanopyBias: [0, 1] as const,
   groundCoverFactor: [0, 1] as const,
@@ -350,8 +393,25 @@ export function evaluateMorphologyHabitatFit(
   const morphology = species.morphology;
   const heightNorm = morphology.maxHeight / MORPHOLOGY_BOUNDS.maxHeight[1];
   const crownNorm = morphology.crownWidth / MORPHOLOGY_BOUNDS.crownWidth[1];
-  const needleBias = morphology.leafType === PlantLeafType.Needle ? 1 : 0;
-  const reedBias = morphology.leafType === PlantLeafType.Reed ? 1 : 0;
+  const foliage = deriveFoliageMetrics(morphology);
+  const slenderUprightBias = clamp(
+    foliage.slenderness * 0.46 +
+      foliage.tipBias * 0.22 +
+      morphology.uprightness * 0.18 +
+      (1 - foliage.attachmentSpread) * 0.14,
+    0,
+    1,
+  );
+  const flexibleWetBias = clamp(
+    foliage.droopiness * 0.18 +
+      foliage.clustering * 0.18 +
+      morphology.uprightness * 0.22 +
+      foliage.verticalDistribution * 0.16 +
+      (1 - morphology.woodiness) * 0.12 +
+      foliage.slenderness * 0.14,
+    0,
+    1,
+  );
 
   const dryLowFormFit =
     habitat.dryness *
@@ -370,9 +430,9 @@ export function evaluateMorphologyHabitatFit(
       species.ecology.floodTolerance * 0.28 +
         morphology.uprightness * 0.18 +
         morphology.topCanopyBias * 0.1 +
-        morphology.leafDensity * 0.1 +
+    foliage.density * 0.1 +
         morphology.verticalBias * 0.08 +
-        reedBias * 0.26,
+        flexibleWetBias * 0.26,
       0,
       1,
     );
@@ -396,7 +456,7 @@ export function evaluateMorphologyHabitatFit(
         (1 - crownNorm) * 0.16 +
         (1 - morphology.groundCoverFactor) * 0.08 +
         species.ecology.slopeTolerance * 0.16 +
-        needleBias * 0.18 +
+        slenderUprightBias * 0.18 +
         morphology.apicalDominance * 0.1,
       0,
       1,
@@ -417,7 +477,8 @@ export function evaluateMorphologyHabitatFit(
     clamp(
       morphology.woodiness * 0.08 +
         heightNorm * 0.08 +
-        needleBias * 0.1,
+        foliage.thicknessNorm * 0.04 +
+        foliage.attachmentSpread * 0.06,
       0,
       0.28,
     );
@@ -442,24 +503,31 @@ export function dominantHabitatPressure(habitat: HabitatPressureProfile): string
  * high-level inspection.
  */
 export function classifyPhenotype(morphology: PlantMorphologyTraits): PlantPhenotypeClass {
-  if (
-    morphology.leafType === PlantLeafType.Reed ||
-    (morphology.woodiness < 0.2 && morphology.uprightness > 0.78 && morphology.groundCoverFactor > 0.45)
-  ) {
+  const foliage = deriveFoliageMetrics(morphology);
+  const tallCanopy = morphology.maxHeight > 4 && morphology.woodiness > 0.58;
+  const slenderWetForm =
+    morphology.woodiness < 0.24 &&
+    morphology.uprightness > 0.76 &&
+    foliage.slenderness > 0.58 &&
+    foliage.clustering > 0.48 &&
+    foliage.tipBias > 0.56;
+
+  if (slenderWetForm) {
     return PlantPhenotypeClass.Reed;
   }
 
   if (
-    morphology.leafType === PlantLeafType.Blade &&
     morphology.maxHeight < 1.1 &&
     morphology.groundCoverFactor > 0.5 &&
-    morphology.woodiness < 0.18
+    morphology.woodiness < 0.18 &&
+    foliage.slenderness > 0.48
   ) {
     return PlantPhenotypeClass.Grass;
   }
 
   if (
-    morphology.leafType === PlantLeafType.Frond &&
+    foliage.droopiness > 0.62 &&
+    foliage.attachmentSpread > 0.56 &&
     morphology.topCanopyBias > 0.72 &&
     morphology.maxHeight > 3.2
   ) {
@@ -467,18 +535,15 @@ export function classifyPhenotype(morphology: PlantMorphologyTraits): PlantPheno
   }
 
   if (
-    morphology.leafType === PlantLeafType.Needle &&
+    foliage.slenderness > 0.56 &&
+    foliage.tipBias > 0.58 &&
     morphology.maxHeight > 3 &&
     morphology.topCanopyBias > 0.55
   ) {
     return PlantPhenotypeClass.Conifer;
   }
 
-  if (
-    morphology.woodiness > 0.58 &&
-    morphology.maxHeight > 4 &&
-    morphology.crownWidth > 1.6
-  ) {
+  if (tallCanopy && morphology.crownWidth > 1.6) {
     return PlantPhenotypeClass.BroadleafTree;
   }
 
@@ -494,6 +559,7 @@ export function derivePlantRenderParameters(
 ): PlantRenderParameters {
   const morphology = species.morphology;
   const descriptor = summarizeMorphology(species);
+  const foliageMetrics = deriveFoliageMetrics(morphology);
   const stemCopies = Math.max(
     1,
     Math.round(
@@ -527,16 +593,6 @@ export function derivePlantRenderParameters(
     morphology.crownHeight * (0.6 + morphology.verticalBias * 0.4),
     0.08,
     6,
-  );
-  const leafLength = clamp(
-    morphology.leafSize * (0.85 + morphology.leafAspectRatio * 0.22),
-    0.03,
-    1.9,
-  );
-  const leafWidth = clamp(
-    morphology.leafSize / Math.max(morphology.leafAspectRatio, 0.2) * 0.95,
-    0.015,
-    0.9,
   );
 
   return {
@@ -602,13 +658,30 @@ export function derivePlantRenderParameters(
       0.03,
       2.5,
     ),
-    leafLength,
-    leafWidth,
+    leafLength: clamp(morphology.leafLength, MORPHOLOGY_BOUNDS.leafLength[0], MORPHOLOGY_BOUNDS.leafLength[1]),
+    leafWidth: clamp(morphology.leafWidth, MORPHOLOGY_BOUNDS.leafWidth[0], MORPHOLOGY_BOUNDS.leafWidth[1]),
+    leafThickness: clamp(
+      morphology.leafThickness,
+      MORPHOLOGY_BOUNDS.leafThickness[0],
+      MORPHOLOGY_BOUNDS.leafThickness[1],
+    ),
     leafTilt: clamp(
-      (1 - morphology.verticalBias) * 0.5 + morphology.branchAngle * 0.22 + morphology.leafAspectRatio * 0.04,
+      (1 - morphology.verticalBias) * 0.26 +
+        morphology.branchAngle * 0.12 +
+        morphology.leafDroop * 0.42 +
+        morphology.leafCurvature * 0.16,
       0.05,
       1.2,
     ),
+    leafCurvature: morphology.leafCurvature,
+    leafDroop: morphology.leafDroop,
+    leafClusterDensity: morphology.leafClusterDensity,
+    leafClusterRadius: morphology.leafClusterRadius,
+    foliagePatchiness: morphology.foliagePatchiness,
+    foliageVerticalDistribution: morphology.foliageVerticalDistribution,
+    foliageTipBias: morphology.foliageTipBias,
+    foliageBasalBias: morphology.foliageBasalBias,
+    foliageAttachmentSpread: morphology.foliageAttachmentSpread,
     flowerAmount: morphology.floweriness,
     groundPatchScale: clamp(morphology.groundCoverFactor * 1.1, 0.18, 1),
     descriptiveLabel: descriptor.label,
@@ -622,6 +695,7 @@ export function getSpeciesDisplayColor(species: PlantSpeciesDefinition): {
 } {
   const hueSeed = ((species.hueSeed % 1000) / 1000) * 0.18;
   const morphology = species.morphology;
+  const foliageMetrics = deriveFoliageMetrics(morphology);
   const ecologicalMoistureBias =
     species.ecology.moisturePreference * 0.06 + species.ecology.persistentWetnessPreference * 0.03;
   const dryBias = (1 - species.ecology.moisturePreference) * 0.04;
@@ -631,13 +705,14 @@ export function getSpeciesDisplayColor(species: PlantSpeciesDefinition): {
     ecologicalMoistureBias -
     dryBias +
     morphology.woodiness * 0.015 +
-    morphology.leafSize * 0.012 -
-    morphology.leafAspectRatio * 0.004;
+    morphology.leafLength * 0.008 +
+    foliageMetrics.widthNorm * 0.01 -
+    foliageMetrics.slenderness * 0.006;
   const saturation =
     0.38 +
     ((species.hueSeed >> 10) % 100) / 320 +
     morphology.foliageDensity * 0.12 +
-    morphology.leafDensity * 0.08;
+    foliageMetrics.density * 0.08;
   const value =
     0.3 +
     ((species.hueSeed >> 18) % 100) / 260 +
@@ -669,9 +744,9 @@ export function deriveMorphologyEcologyEffects(
   const trunkNorm = normalizeTrait(morphology.trunkThickness, MORPHOLOGY_BOUNDS.trunkThickness);
   const crownNorm = morphology.crownRadius / MORPHOLOGY_BOUNDS.crownRadius[1];
   const stemNorm = normalizeTrait(morphology.stemCount, MORPHOLOGY_BOUNDS.stemCount);
-  const slenderLeafBias = clamp((morphology.leafAspectRatio - 1) / 4, 0, 1);
+  const foliage = deriveFoliageMetrics(morphology);
   const canopyMass = clamp(
-    crownNorm * 0.36 + morphology.crownDensity * 0.32 + morphology.foliageDensity * 0.32,
+    crownNorm * 0.28 + morphology.crownDensity * 0.24 + morphology.foliageDensity * 0.2 + foliage.canopyMass * 0.28,
     0,
     1,
   );
@@ -725,7 +800,7 @@ export function deriveMorphologyEcologyEffects(
       morphology.topFoliageBias * MORPHOLOGY_ECOLOGY_SETTINGS.floodTopBiasWeight +
       morphology.clumping * MORPHOLOGY_ECOLOGY_SETTINGS.floodClumpingWeight +
       (1 - morphology.woodiness) * MORPHOLOGY_ECOLOGY_SETTINGS.floodLightnessWeight +
-      slenderLeafBias * MORPHOLOGY_ECOLOGY_SETTINGS.floodLeafSlenderWeight -
+      foliage.slenderness * MORPHOLOGY_ECOLOGY_SETTINGS.floodLeafSlenderWeight -
       crownNorm * MORPHOLOGY_ECOLOGY_SETTINGS.floodSpreadPenalty,
     0,
     1,
@@ -771,12 +846,102 @@ export function deriveMorphologyEcologyEffects(
 }
 
 /**
+ * Foliage metrics collapse the larger foliage trait set into a few continuous
+ * summary dimensions that both ecology and rendering can share. This keeps the
+ * rest of the system trait-first while avoiding repeated ad hoc formulas.
+ */
+function deriveFoliageMetrics(morphology: PlantMorphologyTraits): PlantFoliageMetrics {
+  const lengthNorm = normalizeTrait(morphology.leafLength, MORPHOLOGY_BOUNDS.leafLength);
+  const widthNorm = normalizeTrait(morphology.leafWidth, MORPHOLOGY_BOUNDS.leafWidth);
+  const thicknessNorm = normalizeTrait(morphology.leafThickness, MORPHOLOGY_BOUNDS.leafThickness);
+  const density = clamp(
+    morphology.leafDensity * 0.46 +
+      morphology.leafClusterDensity * 0.26 +
+      morphology.foliageDensity * 0.18 +
+      (1 - morphology.foliagePatchiness) * 0.1,
+    0,
+    1,
+  );
+  const slenderness = clamp(
+    normalizeRange(morphology.leafAspectRatio, 0.2, 5) * 0.54 +
+      lengthNorm * 0.2 +
+      (1 - widthNorm) * 0.16 +
+      (1 - thicknessNorm) * 0.1,
+    0,
+    1,
+  );
+  const droopiness = clamp(
+    morphology.leafDroop * 0.68 + morphology.leafCurvature * 0.2 + (1 - morphology.uprightness) * 0.12,
+    0,
+    1,
+  );
+  const clustering = clamp(
+    morphology.leafClusterDensity * 0.48 + morphology.clumping * 0.24 + (1 - morphology.foliagePatchiness) * 0.14 + density * 0.14,
+    0,
+    1,
+  );
+  const canopyMass = clamp(
+    density * 0.34 +
+      widthNorm * 0.2 +
+      lengthNorm * 0.1 +
+      morphology.leafClusterRadius * 0.14 +
+      (1 - morphology.foliagePatchiness) * 0.12 +
+      morphology.foliageAttachmentSpread * 0.1,
+    0,
+    1,
+  );
+
+  return {
+    lengthNorm,
+    widthNorm,
+    thicknessNorm,
+    density,
+    slenderness,
+    droopiness,
+    curvature: morphology.leafCurvature,
+    clustering,
+    clusterRadius: morphology.leafClusterRadius,
+    patchiness: morphology.foliagePatchiness,
+    verticalDistribution: morphology.foliageVerticalDistribution,
+    tipBias: morphology.foliageTipBias,
+    basalBias: morphology.foliageBasalBias,
+    attachmentSpread: morphology.foliageAttachmentSpread,
+    canopyMass,
+  };
+}
+
+function describeFoliageExpression(foliage: PlantFoliageMetrics): string {
+  if (foliage.slenderness > 0.7 && foliage.tipBias > 0.58 && foliage.clustering > 0.5) {
+    return "slender tufted foliage";
+  }
+
+  if (foliage.widthNorm > 0.58 && foliage.canopyMass > 0.52 && foliage.patchiness < 0.36) {
+    return "broad clustered foliage";
+  }
+
+  if (foliage.droopiness > 0.62 && foliage.attachmentSpread > 0.5) {
+    return "drooping spread foliage";
+  }
+
+  if (foliage.basalBias > 0.58 && foliage.verticalDistribution < 0.42) {
+    return "basal-heavy foliage";
+  }
+
+  if (foliage.patchiness > 0.58) {
+    return "sparse patchy foliage";
+  }
+
+  return "mixed foliage";
+}
+
+/**
  * This helper exists to verify that descriptive plant names are assigned after
  * morphology is generated. It reads only the continuous trait state and does
  * not feed back into structure generation.
  */
 export function summarizeMorphology(species: PlantSpeciesDefinition): PlantMorphologyDebugSummary {
   const morphology = species.morphology;
+  const foliage = deriveFoliageMetrics(morphology);
   const heightNorm = morphology.maxHeight / MORPHOLOGY_BOUNDS.maxHeight[1];
   const spreadNorm = morphology.crownRadius / MORPHOLOGY_BOUNDS.crownRadius[1];
   const branchiness = clamp(
@@ -785,11 +950,11 @@ export function summarizeMorphology(species: PlantSpeciesDefinition): PlantMorph
     1,
   );
   const coverage = clamp(
-    morphology.groundCoverFactor * 0.45 + morphology.basalSpread * 0.3 + (1 - morphology.clumping) * 0.25,
+      morphology.groundCoverFactor * 0.45 + morphology.basalSpread * 0.3 + (1 - morphology.clumping) * 0.25,
     0,
     1,
   );
-  const leafExpression = leafTypeName(morphology.leafType);
+  const leafExpression = describeFoliageExpression(foliage);
 
   let label = "mixed growth form";
   if (coverage > 0.62 && morphology.woodiness < 0.22 && heightNorm < 0.16) {
@@ -917,11 +1082,12 @@ function createSeedMorphology(
   );
   const lateralSpread = clamp(spreadAxis * 0.64 + groundCoverFactor * 0.12, 0, 1);
   const verticalBias = clamp(verticalAxis * 0.68 + woodiness * 0.1 + wetBias * 0.06, 0, 1);
+  const uprightness = clamp(verticalBias * 0.62 + wetBias * 0.14 + (1 - spreadAxis) * 0.08, 0, 1);
+  const clumping = clamp(clumpAxis * 0.7 + wetBias * 0.08, 0, 1);
   const stemCount = clampRange(
     1 + (1 - woodiness) * 3.4 + groundCoverFactor * 1.6 + signedJitter(localRandom, 1.1),
     MORPHOLOGY_BOUNDS.stemCount,
   );
-  const leafType = sampleLeafType(index, total, ecology, woodiness, verticalBias, spreadAxis, localRandom);
   const crownRadius = clampRange(
     0.14 +
       spreadAxis * 2.8 +
@@ -938,6 +1104,76 @@ function createSeedMorphology(
       groundCoverFactor * 0.6 -
       wetBias * 0.4,
     MORPHOLOGY_BOUNDS.maxHeight,
+  );
+  const leafSize = clampRange(
+    0.06 + leafAxis * 0.62 + ecology.moisturePreference * 0.22,
+    MORPHOLOGY_BOUNDS.leafSize,
+  );
+  const leafAspectRatio = clampRange(
+    0.48 +
+      verticalBias * 1.8 +
+      wetBias * 1.05 +
+      dryBias * 0.52 +
+      (1 - spreadAxis) * 0.36,
+    MORPHOLOGY_BOUNDS.leafAspectRatio,
+  );
+  const leafLength = clampRange(
+    leafSize * (0.74 + leafAspectRatio * 0.34 + wetBias * 0.12),
+    MORPHOLOGY_BOUNDS.leafLength,
+  );
+  const leafWidth = clampRange(
+    leafLength / Math.max(leafAspectRatio * (0.86 + dryBias * 0.12), 0.22),
+    MORPHOLOGY_BOUNDS.leafWidth,
+  );
+  const leafThickness = clampRange(
+    0.014 + woodiness * 0.08 + dryBias * 0.05 + (1 - leafAxis) * 0.03 + wetBias * 0.01,
+    MORPHOLOGY_BOUNDS.leafThickness,
+  );
+  const leafDensity = clamp(foliageAxis * 0.62 + (1 - woodiness) * 0.08, 0, 1);
+  const leafClusterDensity = clamp(
+    leafDensity * 0.58 + clumping * 0.22 + wetBias * 0.08 + verticalBias * 0.06,
+    0,
+    1,
+  );
+  const leafClusterRadius = clamp(
+    spreadAxis * 0.54 + groundCoverFactor * 0.16 + (1 - clumping) * 0.12,
+    0,
+    1,
+  );
+  const foliagePatchiness = clamp(
+    (1 - foliageAxis) * 0.44 + (1 - branchAxis) * 0.18 + (1 - ecology.vigor) * 0.14 + dryBias * 0.1,
+    0,
+    1,
+  );
+  const foliageVerticalDistribution = clamp(
+    verticalBias * 0.52 + woodiness * 0.12 + (1 - groundCoverFactor) * 0.12 + wetBias * 0.08,
+    0,
+    1,
+  );
+  const foliageTipBias = clamp(
+    foliageVerticalDistribution * 0.46 + uprightness * 0.18 + wetBias * 0.14 + woodiness * 0.08,
+    0,
+    1,
+  );
+  const foliageBasalBias = clamp(
+    groundCoverFactor * 0.42 + spreadAxis * 0.18 + (1 - woodiness) * 0.12 + dryBias * 0.08,
+    0,
+    1,
+  );
+  const foliageAttachmentSpread = clamp(
+    lateralSpread * 0.42 + leafClusterRadius * 0.24 + (1 - clumping) * 0.14 + (1 - uprightness) * 0.08,
+    0,
+    1,
+  );
+  const leafDroop = clamp(
+    wetBias * 0.26 + (1 - uprightness) * 0.28 + spreadAxis * 0.16 + (1 - woodiness) * 0.1,
+    0,
+    1,
+  );
+  const leafCurvature = clamp(
+    0.16 + leafAxis * 0.24 + wetBias * 0.18 + spreadAxis * 0.12 + (1 - clumping) * 0.1,
+    0,
+    1,
   );
 
   return {
@@ -967,21 +1203,26 @@ function createSeedMorphology(
     topFoliageBias: clamp(verticalBias * 0.48 + woodiness * 0.14 + wetBias * 0.1, 0, 1),
     basalSpread: clamp(groundCoverFactor * 0.58 + spreadAxis * 0.22 + (1 - woodiness) * 0.1, 0, 1),
     foliageDensity: clamp(foliageAxis * 0.68 + ecology.vigor * 0.12, 0, 1),
-    leafSize: clampRange(0.06 + leafAxis * 0.62 + ecology.moisturePreference * 0.22, MORPHOLOGY_BOUNDS.leafSize),
-    leafAspectRatio: clampRange(
-      0.38 +
-        verticalBias * 2.6 +
-        (leafType === PlantLeafType.Needle || leafType === PlantLeafType.Reed ? 1.4 : 0) +
-        (leafType === PlantLeafType.Frond ? 1.1 : 0),
-      MORPHOLOGY_BOUNDS.leafAspectRatio,
-    ),
-    leafDensity: clamp(foliageAxis * 0.62 + (1 - woodiness) * 0.08, 0, 1),
-    leafType,
+    leafSize,
+    leafLength,
+    leafWidth,
+    leafThickness,
+    leafAspectRatio,
+    leafDensity,
+    leafCurvature,
+    leafDroop,
+    leafClusterDensity,
+    leafClusterRadius,
+    foliagePatchiness,
+    foliageVerticalDistribution,
+    foliageTipBias,
+    foliageBasalBias,
+    foliageAttachmentSpread,
     floweriness: clamp((1 - woodiness) * 0.34 + (1 - ecology.floodTolerance) * 0.12 + signedJitter(localRandom, 0.12), 0, 1),
     topCanopyBias: clamp(verticalBias * 0.44 + woodiness * 0.12 + wetBias * 0.14, 0, 1),
     groundCoverFactor,
-    uprightness: clamp(verticalBias * 0.62 + wetBias * 0.14 + (1 - spreadAxis) * 0.08, 0, 1),
-    clumping: clamp(clumpAxis * 0.7 + wetBias * 0.08, 0, 1),
+    uprightness,
+    clumping,
   };
 }
 
@@ -990,38 +1231,6 @@ function sampleTraitAxis(index: number, total: number, jitter: number, random: (
   return clamp(normalized + signedJitter(random, jitter), 0, 1);
 }
 
-function sampleLeafType(
-  index: number,
-  total: number,
-  ecology: PlantEcologyTraits,
-  woodiness: number,
-  verticalBias: number,
-  spreadAxis: number,
-  random: () => number,
-): PlantLeafType {
-  const selector = ((((index * 7) % total) + 0.5) / Math.max(total, 1) + random() * 0.08) % 1;
-
-  if (ecology.floodTolerance > 0.68 && verticalBias > 0.64) {
-    return selector > 0.55 ? PlantLeafType.Reed : PlantLeafType.Blade;
-  }
-  if (woodiness > 0.72 && verticalBias > 0.72 && selector > 0.66) {
-    return PlantLeafType.Needle;
-  }
-  if (woodiness > 0.48 && spreadAxis > 0.58 && selector > 0.82) {
-    return PlantLeafType.Frond;
-  }
-  if (selector < 0.22) {
-    return PlantLeafType.Blade;
-  }
-  if (selector < 0.68) {
-    return PlantLeafType.Broad;
-  }
-  if (selector < 0.86) {
-    return PlantLeafType.Needle;
-  }
-
-  return selector < 0.93 ? PlantLeafType.Frond : PlantLeafType.Reed;
-}
 
 function mutateEcology(
   source: PlantEcologyTraits,
@@ -1418,12 +1627,32 @@ function mutateMorphology(
       source.leafSize * (1 + signedJitter(random, strength)),
       MORPHOLOGY_BOUNDS.leafSize,
     ),
+    leafLength: clampRange(
+      source.leafLength * (1 + signedJitter(random, strength)),
+      MORPHOLOGY_BOUNDS.leafLength,
+    ),
+    leafWidth: clampRange(
+      source.leafWidth * (1 + signedJitter(random, strength)),
+      MORPHOLOGY_BOUNDS.leafWidth,
+    ),
+    leafThickness: clampRange(
+      source.leafThickness * (1 + signedJitter(random, strength * 0.7)),
+      MORPHOLOGY_BOUNDS.leafThickness,
+    ),
     leafAspectRatio: clampRange(
       source.leafAspectRatio * (1 + signedJitter(random, strength * 0.75)),
       MORPHOLOGY_BOUNDS.leafAspectRatio,
     ),
     leafDensity: clamp(source.leafDensity + signedJitter(random, strength), 0, 1),
-    leafType: mutateLeafType(source.leafType, random, strength),
+    leafCurvature: clamp(source.leafCurvature + signedJitter(random, strength), 0, 1),
+    leafDroop: clamp(source.leafDroop + signedJitter(random, strength), 0, 1),
+    leafClusterDensity: clamp(source.leafClusterDensity + signedJitter(random, strength), 0, 1),
+    leafClusterRadius: clamp(source.leafClusterRadius + signedJitter(random, strength), 0, 1),
+    foliagePatchiness: clamp(source.foliagePatchiness + signedJitter(random, strength), 0, 1),
+    foliageVerticalDistribution: clamp(source.foliageVerticalDistribution + signedJitter(random, strength), 0, 1),
+    foliageTipBias: clamp(source.foliageTipBias + signedJitter(random, strength), 0, 1),
+    foliageBasalBias: clamp(source.foliageBasalBias + signedJitter(random, strength), 0, 1),
+    foliageAttachmentSpread: clamp(source.foliageAttachmentSpread + signedJitter(random, strength), 0, 1),
     floweriness: clamp(source.floweriness + signedJitter(random, strength), 0, 1),
     topCanopyBias: clamp(source.topCanopyBias + signedJitter(random, strength), 0, 1),
     groundCoverFactor: clamp(source.groundCoverFactor + signedJitter(random, strength), 0, 1),
@@ -1490,6 +1719,21 @@ function mutateMorphology(
     0.12 + stableFertilePressure * 0.58 + wetPressure * 0.22 - dryPressure * 0.18,
     0.12,
   );
+  morphology.leafLength = lerp(
+    morphology.leafLength,
+    0.14 + wetPressure * 0.82 + stableFertilePressure * 0.46 + dryPressure * 0.16,
+    0.12,
+  );
+  morphology.leafWidth = lerp(
+    morphology.leafWidth,
+    0.06 + stableFertilePressure * 0.34 + wetPressure * 0.12 - dryPressure * 0.08,
+    0.12,
+  );
+  morphology.leafThickness = lerp(
+    morphology.leafThickness,
+    0.018 + dryPressure * 0.08 + slopePressure * 0.04 + morphology.woodiness * 0.05,
+    0.12,
+  );
   morphology.trunkThickness = lerp(
     morphology.trunkThickness,
     0.04 + stableFertilePressure * 0.34 + slopePressure * 0.08,
@@ -1547,7 +1791,52 @@ function mutateMorphology(
   );
   morphology.leafAspectRatio = lerp(
     morphology.leafAspectRatio,
-    1.1 + slopePressure * 1.2 + wetPressure * 1.3 + dryPressure * 0.8,
+    1.1 + slopePressure * 1.2 + wetPressure * 1.1 + dryPressure * 0.6,
+    0.12,
+  );
+  morphology.leafCurvature = lerp(
+    morphology.leafCurvature,
+    0.14 + wetPressure * 0.28 + stableFertilePressure * 0.18 + (1 - morphology.clumping) * 0.12,
+    0.12,
+  );
+  morphology.leafDroop = lerp(
+    morphology.leafDroop,
+    wetPressure * 0.34 + stableFertilePressure * 0.16 + (1 - morphology.uprightness) * 0.18,
+    0.12,
+  );
+  morphology.leafClusterDensity = lerp(
+    morphology.leafClusterDensity,
+    stableFertilePressure * 0.34 + wetPressure * 0.24 + morphology.clumping * 0.18,
+    0.12,
+  );
+  morphology.leafClusterRadius = lerp(
+    morphology.leafClusterRadius,
+    morphology.lateralSpread * 0.44 + dryPressure * 0.12 + stableFertilePressure * 0.14,
+    0.12,
+  );
+  morphology.foliagePatchiness = lerp(
+    morphology.foliagePatchiness,
+    dryPressure * 0.28 + (1 - stableFertilePressure) * 0.22 + (1 - morphology.foliageDensity) * 0.18,
+    0.12,
+  );
+  morphology.foliageVerticalDistribution = lerp(
+    morphology.foliageVerticalDistribution,
+    wetPressure * 0.26 + slopePressure * 0.18 + stableFertilePressure * 0.24 + 0.18,
+    0.12,
+  );
+  morphology.foliageTipBias = lerp(
+    morphology.foliageTipBias,
+    morphology.foliageVerticalDistribution * 0.5 + wetPressure * 0.18 + morphology.apicalDominance * 0.14,
+    0.12,
+  );
+  morphology.foliageBasalBias = lerp(
+    morphology.foliageBasalBias,
+    dryPressure * 0.32 + morphology.groundCoverFactor * 0.24 + (1 - morphology.apicalDominance) * 0.16,
+    0.12,
+  );
+  morphology.foliageAttachmentSpread = lerp(
+    morphology.foliageAttachmentSpread,
+    morphology.lateralSpread * 0.36 + dryPressure * 0.14 + (1 - morphology.clumping) * 0.16,
     0.12,
   );
   morphology.clumping = lerp(
@@ -1557,22 +1846,33 @@ function mutateMorphology(
   );
 
   if (wetPressure > 0.62 && (ecology?.floodTolerance ?? 0) > 0.56) {
-    morphology.leafType = PlantLeafType.Reed;
     morphology.woodiness = lerp(morphology.woodiness, 0.16, 0.28);
     morphology.groundCoverFactor = lerp(morphology.groundCoverFactor, 0.72, 0.24);
     morphology.verticalBias = lerp(morphology.verticalBias, 0.86, 0.2);
     morphology.lateralSpread = lerp(morphology.lateralSpread, 0.28, 0.2);
+    morphology.leafAspectRatio = lerp(morphology.leafAspectRatio, 3.4, 0.22);
+    morphology.leafWidth = lerp(morphology.leafWidth, 0.09, 0.22);
+    morphology.leafClusterDensity = lerp(morphology.leafClusterDensity, 0.76, 0.2);
+    morphology.foliageTipBias = lerp(morphology.foliageTipBias, 0.82, 0.18);
+    morphology.foliageAttachmentSpread = lerp(morphology.foliageAttachmentSpread, 0.24, 0.18);
   } else if (dryPressure > 0.64 && (ecology?.droughtTolerance ?? 0) > 0.54) {
-    morphology.leafType = dryPressure > 0.78 ? PlantLeafType.Blade : PlantLeafType.Needle;
     morphology.groundCoverFactor = lerp(morphology.groundCoverFactor, 0.62, 0.14);
     morphology.maxHeight = lerp(morphology.maxHeight, 0.8 + stableFertilePressure * 3.2, 0.1);
+    morphology.leafWidth = lerp(morphology.leafWidth, 0.08, 0.16);
+    morphology.leafThickness = lerp(morphology.leafThickness, 0.08, 0.18);
+    morphology.foliagePatchiness = lerp(morphology.foliagePatchiness, 0.62, 0.16);
+    morphology.foliageBasalBias = lerp(morphology.foliageBasalBias, 0.62, 0.14);
   } else if (stableFertilePressure > 0.58 && (ecology?.floodTolerance ?? 0) < 0.42) {
-    morphology.leafType = PlantLeafType.Broad;
     morphology.crownDensity = lerp(morphology.crownDensity, 0.72, 0.16);
+    morphology.leafWidth = lerp(morphology.leafWidth, 0.28, 0.14);
+    morphology.leafClusterRadius = lerp(morphology.leafClusterRadius, 0.66, 0.14);
+    morphology.foliagePatchiness = lerp(morphology.foliagePatchiness, 0.18, 0.14);
   } else if (slopePressure > 0.58 && morphology.woodiness > 0.52) {
-    morphology.leafType = PlantLeafType.Needle;
     morphology.verticalBias = lerp(morphology.verticalBias, 0.82, 0.18);
     morphology.crownRadius = lerp(morphology.crownRadius, 1.2, 0.14);
+    morphology.leafAspectRatio = lerp(morphology.leafAspectRatio, 3.2, 0.16);
+    morphology.leafWidth = lerp(morphology.leafWidth, 0.07, 0.16);
+    morphology.foliageTipBias = lerp(morphology.foliageTipBias, 0.76, 0.16);
   }
 
   morphology.maxHeight = clampRange(morphology.maxHeight, MORPHOLOGY_BOUNDS.maxHeight);
@@ -1593,32 +1893,25 @@ function mutateMorphology(
   morphology.basalSpread = clamp(morphology.basalSpread, 0, 1);
   morphology.foliageDensity = clamp(morphology.foliageDensity, 0, 1);
   morphology.leafSize = clampRange(morphology.leafSize, MORPHOLOGY_BOUNDS.leafSize);
+  morphology.leafLength = clampRange(morphology.leafLength, MORPHOLOGY_BOUNDS.leafLength);
+  morphology.leafWidth = clampRange(morphology.leafWidth, MORPHOLOGY_BOUNDS.leafWidth);
+  morphology.leafThickness = clampRange(morphology.leafThickness, MORPHOLOGY_BOUNDS.leafThickness);
   morphology.leafAspectRatio = clampRange(morphology.leafAspectRatio, MORPHOLOGY_BOUNDS.leafAspectRatio);
   morphology.leafDensity = clamp(morphology.leafDensity, 0, 1);
+  morphology.leafCurvature = clamp(morphology.leafCurvature, 0, 1);
+  morphology.leafDroop = clamp(morphology.leafDroop, 0, 1);
+  morphology.leafClusterDensity = clamp(morphology.leafClusterDensity, 0, 1);
+  morphology.leafClusterRadius = clamp(morphology.leafClusterRadius, 0, 1);
+  morphology.foliagePatchiness = clamp(morphology.foliagePatchiness, 0, 1);
+  morphology.foliageVerticalDistribution = clamp(morphology.foliageVerticalDistribution, 0, 1);
+  morphology.foliageTipBias = clamp(morphology.foliageTipBias, 0, 1);
+  morphology.foliageBasalBias = clamp(morphology.foliageBasalBias, 0, 1);
+  morphology.foliageAttachmentSpread = clamp(morphology.foliageAttachmentSpread, 0, 1);
   morphology.topCanopyBias = clamp(morphology.topCanopyBias, 0, 1);
   morphology.groundCoverFactor = clamp(morphology.groundCoverFactor, 0, 1);
   morphology.uprightness = clamp(morphology.uprightness, 0, 1);
   morphology.clumping = clamp(morphology.clumping, 0, 1);
   return morphology;
-}
-
-function mutateLeafType(
-  current: PlantLeafType,
-  random: () => number,
-  strength: number,
-): PlantLeafType {
-  if (random() > strength * 0.45) {
-    return current;
-  }
-
-  const candidates = [
-    PlantLeafType.Blade,
-    PlantLeafType.Broad,
-    PlantLeafType.Needle,
-    PlantLeafType.Frond,
-    PlantLeafType.Reed,
-  ];
-  return candidates[Math.floor(random() * candidates.length)] ?? current;
 }
 
 function classifyEcologyProfile(ecology: PlantEcologyTraits): number {
@@ -1670,20 +1963,5 @@ function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
       return [t, p, v];
     default:
       return [v, p, q];
-  }
-}
-
-function leafTypeName(leafType: PlantLeafType): string {
-  switch (leafType) {
-    case PlantLeafType.Blade:
-      return "blade";
-    case PlantLeafType.Broad:
-      return "broad";
-    case PlantLeafType.Needle:
-      return "needle";
-    case PlantLeafType.Frond:
-      return "frond";
-    case PlantLeafType.Reed:
-      return "reed";
   }
 }

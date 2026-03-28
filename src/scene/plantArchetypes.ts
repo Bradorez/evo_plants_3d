@@ -10,7 +10,6 @@ import type { Scene } from "@babylonjs/core";
 import {
   derivePlantRenderParameters,
   getSpeciesDisplayColor,
-  PlantLeafType,
   type PlantRenderParameters,
   type PlantSpeciesDefinition,
 } from "../sim/PlantSpecies";
@@ -239,9 +238,10 @@ function buildBranchLayer(
 }
 
 /**
- * Foliage stays continuous and trait-driven, but leaf structure still matters.
- * Leaf type influences the primitive used for each cluster, while the amount,
- * spread, and vertical placement all come directly from morphology.
+ * Foliage stays fully continuous and trait-driven. The renderer no longer
+ * selects from named leaf families; instead it assembles each cluster from
+ * generic ribbons and optional canopy blobs whose shape, density, droop, and
+ * placement all come from inherited foliage traits.
  */
 function buildFoliageLayer(
   parts: Mesh[],
@@ -264,15 +264,22 @@ function buildFoliageLayer(
     const lateralRadius =
       render.foliageLateralSpread *
       radialFactor *
-      (0.32 + species.morphology.lateralSpread * 0.8);
+      (0.24 + species.morphology.lateralSpread * 0.54 + render.foliageAttachmentSpread * 0.34);
     const verticalCenter =
       anchor.height *
       clamp(
-        0.22 + render.foliageTopBias * 0.54 + species.morphology.topCanopyBias * 0.08,
+        0.12 +
+          render.foliageVerticalDistribution * 0.34 +
+          render.foliageTopBias * 0.22 +
+          render.foliageTipBias * 0.18 +
+          render.foliageBasalBias * 0.08 +
+          species.morphology.topCanopyBias * 0.06,
         0.08,
         1,
       );
-    const verticalJitter = render.foliageVerticalSpan * (0.18 + ((index * 19 + species.id) % 7) / 22);
+    const verticalJitter =
+      render.foliageVerticalSpan *
+      (0.08 + render.foliagePatchiness * 0.18 + ((index * 19 + species.id) % 7) / 22);
     const position = new Vector3(
       anchor.top.x * 0.22 + Math.cos(angle) * lateralRadius,
       verticalCenter + (index % 2 === 0 ? verticalJitter : -verticalJitter * 0.45),
@@ -340,85 +347,126 @@ function addLeafElement(
 ): void {
   const length = Math.max(0.04, render.leafLength * clusterScale);
   const width = Math.max(0.02, render.leafWidth * clusterScale);
-  const verticalStretch = 0.7 + species.morphology.verticalBias * 0.55;
+  const thickness = Math.max(0.01, render.leafThickness * clusterScale);
+  const blobStrength = clamp(
+    (width / Math.max(length, 0.04)) * 1.35 +
+      render.leafClusterDensity * 0.28 +
+      (1 - render.foliagePatchiness) * 0.24 -
+      render.foliageAttachmentSpread * 0.18,
+    0,
+    1,
+  );
+  const ribbonCount = Math.max(
+    1,
+    Math.round(
+      1 +
+        render.leafClusterDensity * 4 +
+        render.foliageAmount * 2 -
+        render.foliagePatchiness * 2 +
+        render.foliageAttachmentSpread,
+    ),
+  );
+  const attachmentRadius =
+    render.foliageLateralSpread *
+    clusterScale *
+    (0.08 + render.foliageAttachmentSpread * 0.16 + render.leafClusterRadius * 0.12);
 
-  switch (species.morphology.leafType) {
-    case PlantLeafType.Needle: {
-      const element = MeshBuilder.CreateCylinder("plant-needle", {
-        height: length * 0.95,
-        diameterTop: 0,
-        diameterBottom: Math.max(0.03, width * 1.2),
-        tessellation: 4,
-      }, scene);
-      element.position = position.clone();
-      element.rotation.y = angle;
-      element.rotation.x = -render.leafTilt * 0.36;
-      applyUniformVertexColor(element, palette.foliage);
-      element.bakeCurrentTransformIntoVertices();
-      parts.push(element);
-      break;
-    }
-    case PlantLeafType.Frond: {
-      const frondCount = 3;
-      for (let frondIndex = 0; frondIndex < frondCount; frondIndex += 1) {
-        const frond = MeshBuilder.CreateBox(`plant-frond-${frondIndex}`, {
-          width: Math.max(0.03, width * 0.5),
-          height: Math.max(0.02, width * 0.24),
-          depth: length * (0.9 + frondIndex * 0.08),
-        }, scene);
-        frond.position = position.clone();
-        frond.rotation.y = angle + (Math.PI * 2 * frondIndex) / frondCount;
-        frond.rotation.x = -0.28 - render.leafTilt * 0.35;
-        applyUniformVertexColor(frond, palette.foliage);
-        frond.bakeCurrentTransformIntoVertices();
-        parts.push(frond);
-      }
-      break;
-    }
-    case PlantLeafType.Reed: {
-      const element = MeshBuilder.CreateBox("plant-reed-leaf", {
-        width: Math.max(0.02, width * 0.32),
-        height: length * verticalStretch,
-        depth: Math.max(0.015, width * 0.18),
-      }, scene);
-      element.position = position.clone();
-      element.rotation.y = angle;
-      element.rotation.z = render.leafTilt * 0.18;
-      applyUniformVertexColor(element, palette.foliage);
-      element.bakeCurrentTransformIntoVertices();
-      parts.push(element);
-      break;
-    }
-    case PlantLeafType.Blade: {
-      const element = MeshBuilder.CreateBox("plant-blade-leaf", {
-        width: Math.max(0.02, width * 0.3),
-        height: length * verticalStretch,
-        depth: Math.max(0.016, width * 0.16),
-      }, scene);
-      element.position = position.clone();
-      element.rotation.y = angle;
-      element.rotation.z = render.leafTilt * 0.24;
-      applyUniformVertexColor(element, palette.foliage);
-      element.bakeCurrentTransformIntoVertices();
-      parts.push(element);
-      break;
-    }
-    case PlantLeafType.Broad:
-    default: {
-      const element = MeshBuilder.CreateSphere("plant-broad-leaf", {
-        diameterX: width * 2.1,
-        diameterY: length * Math.max(0.42, 0.58 + species.morphology.crownDensity * 0.25),
-        diameterZ: width * (1.8 + species.morphology.lateralSpread * 0.9),
-        segments: 4,
-      }, scene);
-      element.position = position.clone();
-      element.rotation.y = angle;
-      applyUniformVertexColor(element, palette.foliage);
-      element.bakeCurrentTransformIntoVertices();
-      parts.push(element);
-      break;
-    }
+  if (blobStrength > 0.12) {
+    addFoliageBlob(parts, scene, palette, position, angle, length, width, thickness, render, blobStrength);
   }
+
+  for (let ribbonIndex = 0; ribbonIndex < ribbonCount; ribbonIndex += 1) {
+    const localAngle = angle + (Math.PI * 2 * ribbonIndex) / Math.max(ribbonCount, 1);
+    const localRadius = attachmentRadius * Math.sqrt((ribbonIndex + 0.35) / (ribbonCount + 0.35));
+    const localPosition = new Vector3(
+      position.x + Math.cos(localAngle) * localRadius,
+      position.y + (render.foliageBasalBias - render.foliageTipBias) * 0.05 * length,
+      position.z + Math.sin(localAngle) * localRadius,
+    );
+    const localLength = length * (0.74 + ribbonIndex / Math.max(ribbonCount - 1, 1) * 0.28);
+    const localWidth = width * (0.82 + ((ribbonIndex * 17 + species.id) % 5) * 0.05);
+    addLeafRibbon(parts, scene, palette, localPosition, localAngle, localLength, localWidth, thickness, render);
+  }
+}
+
+function addFoliageBlob(
+  parts: Mesh[],
+  scene: Scene,
+  palette: ReturnType<typeof getSpeciesDisplayColor>,
+  position: Vector3,
+  angle: number,
+  length: number,
+  width: number,
+  thickness: number,
+  render: PlantRenderParameters,
+  blobStrength: number,
+): void {
+  const blob = MeshBuilder.CreateSphere("plant-foliage-blob", {
+    diameterX: Math.max(0.05, width * (1.4 + render.foliageAttachmentSpread * 0.8)),
+    diameterY: Math.max(0.05, length * (0.34 + blobStrength * 0.28 + render.leafDroop * 0.08)),
+    diameterZ: Math.max(0.05, width * (1.2 + render.leafClusterRadius * 1.1)),
+    segments: 4,
+  }, scene);
+  blob.position = position.clone();
+  blob.rotation.y = angle;
+  blob.rotation.x = -render.leafDroop * 0.24;
+  blob.rotation.z = render.leafCurvature * 0.18;
+  applyUniformVertexColor(blob, palette.foliage);
+  blob.bakeCurrentTransformIntoVertices();
+  parts.push(blob);
+}
+
+function addLeafRibbon(
+  parts: Mesh[],
+  scene: Scene,
+  palette: ReturnType<typeof getSpeciesDisplayColor>,
+  position: Vector3,
+  angle: number,
+  length: number,
+  width: number,
+  thickness: number,
+  render: PlantRenderParameters,
+): void {
+  const basalBias = render.foliageBasalBias;
+  const baseLength = length * 0.54;
+  const tipLength = length * 0.46;
+  const baseTilt = render.leafTilt * (0.42 + render.foliageAttachmentSpread * 0.36) - basalBias * 0.08;
+  const tipTilt = baseTilt + render.leafCurvature * 0.34 + render.leafDroop * 0.26;
+  const droopOffset = render.leafDroop * length * 0.12;
+
+  const base = MeshBuilder.CreateBox("plant-leaf-base", {
+    width: Math.max(0.014, width),
+    height: Math.max(0.01, thickness * (1.1 + render.leafCurvature * 0.4)),
+    depth: Math.max(0.04, baseLength),
+  }, scene);
+  base.position = new Vector3(
+    position.x,
+    position.y - droopOffset * 0.2,
+    position.z,
+  );
+  base.rotation.y = angle;
+  base.rotation.x = -render.leafDroop * 0.28;
+  base.rotation.z = baseTilt;
+  applyUniformVertexColor(base, palette.foliage);
+  base.bakeCurrentTransformIntoVertices();
+  parts.push(base);
+
+  const tip = MeshBuilder.CreateBox("plant-leaf-tip", {
+    width: Math.max(0.012, width * (0.82 + render.leafCurvature * 0.1)),
+    height: Math.max(0.008, thickness * 0.9),
+    depth: Math.max(0.03, tipLength),
+  }, scene);
+  tip.position = new Vector3(
+    position.x + Math.cos(angle) * baseLength * 0.18 * (0.3 + render.foliageAttachmentSpread),
+    position.y - droopOffset,
+    position.z + Math.sin(angle) * baseLength * 0.18 * (0.3 + render.foliageAttachmentSpread),
+  );
+  tip.rotation.y = angle;
+  tip.rotation.x = -render.leafDroop * 0.54;
+  tip.rotation.z = tipTilt;
+  applyUniformVertexColor(tip, palette.foliage);
+  tip.bakeCurrentTransformIntoVertices();
+  parts.push(tip);
 }
 
 function applyUniformVertexColor(mesh: Mesh, color: readonly [number, number, number]): void {
