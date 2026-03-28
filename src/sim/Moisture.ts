@@ -4,12 +4,14 @@ import type { RainfallModel } from "./Rainfall";
 
 export interface MoistureSettings {
   rainfallToMoisture: number;
+  infiltrationRechargeInfluence: number;
   waterToMoistureInfluence: number;
   nearbyWaterInfluence: number;
   channelMoistureInfluence: number;
   dryingRate: number;
   hotDryingSensitivity: number;
   drainageRate: number;
+  organicMoistureRetention: number;
   moistureSmoothingStrength: number;
   persistentWetnessRise: number;
   persistentWetnessDecay: number;
@@ -26,12 +28,14 @@ export interface MoistureSettings {
 export class MoistureModel {
   public readonly settings: MoistureSettings = {
     rainfallToMoisture: 0.11,
+    infiltrationRechargeInfluence: 0.92,
     waterToMoistureInfluence: 0.38,
     nearbyWaterInfluence: 0.18,
     channelMoistureInfluence: 0.08,
     dryingRate: 0.018,
     hotDryingSensitivity: 0.9,
     drainageRate: 0.022,
+    organicMoistureRetention: 0.36,
     moistureSmoothingStrength: 0.22,
     persistentWetnessRise: 0.2,
     persistentWetnessDecay: 0.035,
@@ -89,6 +93,8 @@ export class MoistureModel {
     temperature: Float32Array,
     flowAccumulation: Float32Array,
     flowIntensity: Float32Array,
+    infiltrationRecharge: Float32Array,
+    organicCover: Float32Array,
     rainfallMultiplier: number,
     soilDryingMultiplier: number,
     dtSeconds: number,
@@ -121,7 +127,11 @@ export class MoistureModel {
         const nearbyChannel = this.blurredFlowSignal[index];
         const slope = this.sampleSlope(terrain, x, y);
         const basinFactor = this.sampleBasinFactor(terrain, x, y);
-        const retention = clamp(0.34 + basinFactor * 0.48 + (1 - slope) * 0.18, 0.2, 1);
+        const retention = clamp(
+          0.3 + basinFactor * 0.42 + (1 - slope) * 0.16 + organicCover[index] * 0.12,
+          0.2,
+          1,
+        );
         const rainfallInput =
           rainfall.getIntensity() *
           clamp(rainfallMultiplier, 0.15, 2.25) *
@@ -129,6 +139,10 @@ export class MoistureModel {
           this.settings.rainfallToMoisture *
           retention *
           dtSeconds;
+        const infiltrationInput =
+          infiltrationRecharge[index] *
+          this.settings.infiltrationRechargeInfluence *
+          (0.42 + retention * 0.58);
         const waterInput =
           localWater * this.settings.waterToMoistureInfluence * (0.4 + retention * 0.6) * dtSeconds;
         const nearbyWaterInput =
@@ -138,7 +152,7 @@ export class MoistureModel {
           this.settings.channelMoistureInfluence *
           (0.4 + basinFactor * 0.6) *
           dtSeconds;
-        const source = rainfallInput + waterInput + nearbyWaterInput + channelInput;
+        const source = rainfallInput + infiltrationInput + waterInput + nearbyWaterInput + channelInput;
 
         const dryExposure = clamp(1 - nearbyWater * 0.7 - localWater * 0.9, 0.12, 1);
         const heatDryingMultiplier = clamp(
@@ -151,10 +165,14 @@ export class MoistureModel {
           dryExposure *
           heatDryingMultiplier *
           clamp(soilDryingMultiplier, 0.5, 2) *
+          (1 - organicCover[index] * this.settings.organicMoistureRetention) *
           (0.35 + slope * 0.65) *
           dtSeconds;
         const drainageLoss =
-          this.settings.drainageRate * (slope * 0.75 + (1 - retention) * 0.25) * dtSeconds;
+          this.settings.drainageRate *
+          (slope * 0.75 + (1 - retention) * 0.25) *
+          (1 - organicCover[index] * 0.18) *
+          dtSeconds;
         const nextMoisture = clamp(
           this.moisture[index] + source - Math.min(this.moisture[index], dryingLoss + drainageLoss),
           0,

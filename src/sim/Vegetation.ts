@@ -1143,6 +1143,16 @@ export class VegetationModel {
     persistentWetness: Float32Array,
     floodProne: Float32Array,
     waterDepth: Float32Array,
+    runoffShare: Float32Array,
+    infiltrationShare: Float32Array,
+    soilCohesion: Float32Array,
+    rootStabilization: Float32Array,
+    organicCover: Float32Array,
+    combinedResistance: Float32Array,
+    bankStability: Float32Array,
+    detachmentThreshold: Float32Array,
+    armoring: Float32Array,
+    erosivePower: Float32Array,
     season: {
       phase: number;
       rainfallMultiplier: number;
@@ -1214,6 +1224,9 @@ export class VegetationModel {
           temperatureTolerance: species.ecology.temperatureTolerance,
           heatStressResistance: species.ecology.heatStressResistance,
           slopeTolerance: species.ecology.slopeTolerance,
+          rootDepth: species.ecology.rootDepth,
+          rootSpread: species.ecology.rootSpread,
+          soilBindingStrength: species.ecology.soilBindingStrength,
           spreadAbility: species.ecology.spreadAbility,
           vigor: species.ecology.vigor,
         }
@@ -1380,6 +1393,18 @@ export class VegetationModel {
         temperatureOffset: season.temperatureOffset,
         evaporationMultiplier: season.evaporationMultiplier,
         seasonLabel: season.seasonLabel,
+      },
+      erosion: {
+        runoffShare: runoffShare[index],
+        infiltrationShare: infiltrationShare[index],
+        soilCohesion: soilCohesion[index],
+        rootStabilization: rootStabilization[index],
+        organicCover: organicCover[index],
+        combinedResistance: combinedResistance[index],
+        bankStability: bankStability[index],
+        armoring: armoring[index],
+        detachmentThreshold: detachmentThreshold[index],
+        erosivePower: erosivePower[index],
       },
       fitness: {
         carryingCapacity,

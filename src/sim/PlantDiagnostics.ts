@@ -127,6 +127,18 @@ export interface PlantSelectionDiagnostics {
     evaporationMultiplier: number;
     seasonLabel: string;
   };
+  erosion: {
+    runoffShare: number;
+    infiltrationShare: number;
+    soilCohesion: number;
+    rootStabilization: number;
+    organicCover: number;
+    combinedResistance: number;
+    bankStability: number;
+    armoring: number;
+    detachmentThreshold: number;
+    erosivePower: number;
+  };
   fitness: {
     carryingCapacity: number;
     suitability: number;

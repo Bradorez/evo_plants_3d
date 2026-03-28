@@ -28,6 +28,9 @@ export interface PlantEcologyTraits {
   temperatureTolerance: number;
   heatStressResistance: number;
   slopeTolerance: number;
+  rootDepth: number;
+  rootSpread: number;
+  soilBindingStrength: number;
   spreadAbility: number;
   vigor: number;
 }
@@ -1038,6 +1041,21 @@ function createSeedEcology(
     0,
     1,
   );
+  const rootDepth = clamp(
+    0.16 + toleranceAxis * 0.22 + slopeAxis * 0.18 + dryBiasFromAxes(moistureAxis, toleranceAxis) * 0.18,
+    0,
+    1,
+  );
+  const rootSpread = clamp(
+    0.18 + spreadAxis * 0.34 + moisturePreference * 0.12 + floodTolerance * 0.08,
+    0,
+    1,
+  );
+  const soilBindingStrength = clamp(
+    0.18 + slopeAxis * 0.18 + toleranceAxis * 0.16 + (1 - floodAxis) * 0.1 + rootDepth * 0.18,
+    0,
+    1,
+  );
 
   return {
     moisturePreference,
@@ -1050,6 +1068,9 @@ function createSeedEcology(
     temperatureTolerance,
     heatStressResistance: clamp(0.14 + warmthAxis * 0.46 + droughtTolerance * 0.18, 0, 1),
     slopeTolerance: clamp(0.16 + slopeAxis * 0.72, 0.1, 1),
+    rootDepth,
+    rootSpread,
+    soilBindingStrength,
     spreadAbility: clamp(0.12 + spreadAxis * 0.72, 0.08, 1),
     vigor: clamp(0.18 + vigorAxis * 0.68, 0.1, 1),
   };
@@ -1231,6 +1252,10 @@ function sampleTraitAxis(index: number, total: number, jitter: number, random: (
   return clamp(normalized + signedJitter(random, jitter), 0, 1);
 }
 
+function dryBiasFromAxes(moistureAxis: number, toleranceAxis: number): number {
+  return clamp((1 - moistureAxis) * 0.72 + toleranceAxis * 0.28, 0, 1);
+}
+
 
 function mutateEcology(
   source: PlantEcologyTraits,
@@ -1261,6 +1286,9 @@ function mutateEcology(
     ),
     heatStressResistance: clamp(source.heatStressResistance + signedJitter(random, strength), 0, 1),
     slopeTolerance: clamp(source.slopeTolerance + signedJitter(random, strength * 0.75), 0.1, 1),
+    rootDepth: clamp(source.rootDepth + signedJitter(random, strength), 0, 1),
+    rootSpread: clamp(source.rootSpread + signedJitter(random, strength), 0, 1),
+    soilBindingStrength: clamp(source.soilBindingStrength + signedJitter(random, strength), 0, 1),
     spreadAbility: clamp(source.spreadAbility + signedJitter(random, strength), 0.08, 1),
     vigor: clamp(source.vigor + signedJitter(random, strength), 0.1, 1),
   };
@@ -1282,6 +1310,21 @@ function mutateEcology(
   );
   ecology.heatStressResistance = lerp(ecology.heatStressResistance, habitat.heatStress, 0.16);
   ecology.slopeTolerance = lerp(ecology.slopeTolerance, habitat.slope * 0.8 + 0.2, 0.14);
+  ecology.rootDepth = lerp(
+    ecology.rootDepth,
+    habitat.dryness * 0.28 + habitat.stability * 0.26 + habitat.slope * 0.2 + 0.14,
+    0.14,
+  );
+  ecology.rootSpread = lerp(
+    ecology.rootSpread,
+    habitat.fertileMoisture * 0.26 + habitat.channelInfluence * 0.18 + habitat.stability * 0.16 + 0.18,
+    0.14,
+  );
+  ecology.soilBindingStrength = lerp(
+    ecology.soilBindingStrength,
+    habitat.slope * 0.28 + habitat.stability * 0.24 + habitat.fertileMoisture * 0.16 + 0.16,
+    0.14,
+  );
   ecology.vigor = lerp(ecology.vigor, habitat.fertileMoisture * 0.6 + habitat.stability * 0.4, 0.12);
   return ecology;
 }

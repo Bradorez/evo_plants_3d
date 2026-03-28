@@ -1,4 +1,4 @@
-import { ErosionModel } from "./Erosion";
+import { ErosionModel, type ErosionStabilityInputs } from "./Erosion";
 import { HydrologyModel } from "./Hydrology";
 import { MoistureModel } from "./Moisture";
 import type { PlantSelectionDiagnostics } from "./PlantDiagnostics";
@@ -6,6 +6,7 @@ import type { PlantSpeciesDefinition } from "./PlantSpecies";
 import { RainfallModel } from "./Rainfall";
 import { SandboxModel, type SandboxToolMode } from "./Sandbox";
 import { SeasonModel, type SeasonState } from "./Season";
+import { SoilStabilityModel } from "./SoilStability";
 import { TemperatureModel } from "./Temperature";
 import { recomputeTerrainBounds, TerrainData, TerrainGenerator } from "./Terrain";
 import { type VegetationDebugSummary, VegetationModel } from "./Vegetation";
@@ -53,12 +54,12 @@ const DEFAULT_SCHEDULE: SimulationSchedule = {
   ecologyStepSeconds: 0.25,
   vegetationStepSeconds: 0.75,
   slowProcessStepSeconds: 0.5,
-  maxHydrologySubstepsPerAdvance: 10,
-  maxErosionSubstepsPerAdvance: 4,
-  maxEcologySubstepsPerAdvance: 3,
-  maxVegetationSubstepsPerAdvance: 2,
-  maxSlowSubstepsPerAdvance: 2,
-  maxAdvanceSeconds: 0.2,
+  maxHydrologySubstepsPerAdvance: 90,
+  maxErosionSubstepsPerAdvance: 18,
+  maxEcologySubstepsPerAdvance: 10,
+  maxVegetationSubstepsPerAdvance: 6,
+  maxSlowSubstepsPerAdvance: 6,
+  maxAdvanceSeconds: 2,
 };
 
 /**
@@ -92,6 +93,7 @@ export class Simulation {
   private hydrology: HydrologyModel;
   private erosion: ErosionModel;
   private moisture: MoistureModel;
+  private soilStability: SoilStabilityModel;
   private sandbox: SandboxModel;
   private readonly seasonModel: SeasonModel;
   private temperatureModel: TemperatureModel;
@@ -151,6 +153,7 @@ export class Simulation {
       this.hydrology.getFlowIntensity(),
     );
     this.moisture = new MoistureModel(this.terrain.grid.cellCount);
+    this.soilStability = new SoilStabilityModel(this.terrain.grid.cellCount);
     this.temperatureModel = new TemperatureModel(this.terrain);
     this.seasonState = this.seasonModel.getState();
     this.temperatureModel.applySeasonalOffset(this.seasonState.temperatureOffset);
@@ -164,6 +167,7 @@ export class Simulation {
     this.vegetationProfile = this.vegetation.getProfileId();
     this.vegetationSpeciesId = this.vegetation.getDominantSpeciesId();
     this.vegetationPhenotype = this.vegetation.getPhenotypeClass();
+    this.refreshSoilStability(0);
   }
 
   public static createSeed(): number {
@@ -197,6 +201,7 @@ export class Simulation {
     this.hydrology.reset();
     this.erosion.reset();
     this.moisture.reset();
+    this.soilStability.reset();
     this.vegetation.reset();
     this.waterDepth = this.hydrology.getWaterDepth();
     this.erosion.setWaterDepthBuffer(this.waterDepth);
@@ -215,6 +220,7 @@ export class Simulation {
     this.seasonState = this.seasonModel.getState();
     this.temperatureModel.applySeasonalOffset(this.seasonState.temperatureOffset);
     this.temperature = this.temperatureModel.getTemperature();
+    this.refreshSoilStability(0);
     this.syncVegetationState();
   }
 
@@ -260,6 +266,7 @@ export class Simulation {
       this.hydrology.getFlowIntensity(),
     );
     this.moisture = new MoistureModel(this.terrain.grid.cellCount);
+    this.soilStability = new SoilStabilityModel(this.terrain.grid.cellCount);
     this.sandbox = new SandboxModel(this.terrain.grid.cellCount);
     this.temperatureModel = new TemperatureModel(this.terrain);
     this.seasonState = this.seasonModel.getState();
@@ -277,6 +284,7 @@ export class Simulation {
     this.vegetationSpeciesId = this.vegetation.getDominantSpeciesId();
     this.vegetationPhenotype = this.vegetation.getPhenotypeClass();
     this.vegetationInitialized = false;
+    this.refreshSoilStability(0);
     this.syncVegetationState();
   }
 
@@ -319,6 +327,16 @@ export class Simulation {
       this.persistentWetness,
       this.floodProne,
       this.waterDepth,
+      this.soilStability.getRunoffShare(),
+      this.soilStability.getInfiltrationShare(),
+      this.soilStability.getSoilCohesion(),
+      this.soilStability.getRootStabilization(),
+      this.soilStability.getOrganicCover(),
+      this.soilStability.getCombinedResistance(),
+      this.soilStability.getBankStability(),
+      this.soilStability.getDetachmentThreshold(),
+      this.erosion.getArmoringField(),
+      this.erosion.getErosivePowerField(),
       {
         phase: this.seasonState.phase,
         rainfallMultiplier: this.seasonState.rainfallMultiplier,
@@ -542,7 +560,13 @@ export class Simulation {
   private runHydrologyStep(stepSeconds: number): void {
     this.advanceSeason(stepSeconds);
     this.sandbox.applyWaterSources(this.waterDepth, stepSeconds);
-    this.rainfall.apply(this.waterDepth, stepSeconds, this.seasonState.rainfallMultiplier);
+    this.soilStability.applyRainfallPartition(
+      this.rainfall,
+      this.waterDepth,
+      this.soilMoisture,
+      this.seasonState.rainfallMultiplier,
+      stepSeconds,
+    );
     const hydrologyResult = this.hydrology.step(stepSeconds);
     this.waterDepth = this.hydrology.getWaterDepth();
     this.waterBalance.step(
@@ -559,17 +583,16 @@ export class Simulation {
 
   private runErosionStep(stepSeconds: number): void {
     this.erosion.setWaterDepthBuffer(this.waterDepth);
-    this.erosion.step(stepSeconds, this.terrain);
+    this.erosion.step(stepSeconds, this.terrain, this.getErosionStabilityInputs());
     recomputeTerrainBounds(this.terrain);
   }
 
   private runSlowProcessStep(stepSeconds: number): void {
-    this.erosion.setWaterDepthBuffer(this.waterDepth);
-    const settlingResult = this.erosion.settleTerrain(stepSeconds);
-
-    if (settlingResult.maxTerrainDelta > 0) {
-      recomputeTerrainBounds(this.terrain);
-    }
+    // Disabled by request. The previous terrain relaxation pass smoothed the
+    // world even in fully dry conditions, which made the landscape drift
+    // without any hydrologic cause. Keep the slow-process hook for future
+    // hydrology-aware settling, but do not mutate terrain here for now.
+    void stepSeconds;
   }
 
   private runEcologyStep(stepSeconds: number): void {
@@ -580,13 +603,17 @@ export class Simulation {
       this.temperature,
       this.flowAccumulation,
       this.hydrology.getFlowIntensity(),
+      this.soilStability.getInfiltrationRecharge(),
+      this.soilStability.getOrganicCover(),
       this.seasonState.rainfallMultiplier,
       this.seasonState.soilDryingMultiplier,
       stepSeconds,
     );
+    this.soilStability.clearHydrologySignals();
     this.soilMoisture = this.moisture.getMoisture();
     this.persistentWetness = this.moisture.getPersistentWetness();
     this.floodProne = this.moisture.getFloodProne();
+    this.refreshSoilStability(stepSeconds);
 
   }
 
@@ -612,6 +639,7 @@ export class Simulation {
     this.vegetationSpeciesId = this.vegetation.getDominantSpeciesId();
     this.vegetationPhenotype = this.vegetation.getPhenotypeClass();
     this.vegetationRevision += 1;
+    this.refreshSoilStability(0);
   }
 
   private initializeVegetation(): void {
@@ -631,6 +659,7 @@ export class Simulation {
     this.vegetationSpeciesId = this.vegetation.getDominantSpeciesId();
     this.vegetationPhenotype = this.vegetation.getPhenotypeClass();
     this.vegetationRevision += 1;
+    this.refreshSoilStability(0);
   }
 
   private syncVegetationState(): void {
@@ -640,5 +669,31 @@ export class Simulation {
     this.vegetationSpeciesId = this.vegetation.getDominantSpeciesId();
     this.vegetationPhenotype = this.vegetation.getPhenotypeClass();
     this.vegetationRevision += 1;
+  }
+
+  private refreshSoilStability(stepSeconds: number): void {
+    this.soilStability.updateEcology(
+      this.terrain,
+      this.soilMoisture,
+      this.persistentWetness,
+      this.temperature,
+      this.vegetationBiomass,
+      this.vegetationSpeciesId,
+      this.vegetation.getSpeciesCatalog(),
+      stepSeconds,
+    );
+  }
+
+  private getErosionStabilityInputs(): ErosionStabilityInputs {
+    return {
+      runoffShare: this.soilStability.getRunoffShare(),
+      infiltrationShare: this.soilStability.getInfiltrationShare(),
+      soilCohesion: this.soilStability.getSoilCohesion(),
+      rootStabilization: this.soilStability.getRootStabilization(),
+      organicCover: this.soilStability.getOrganicCover(),
+      combinedResistance: this.soilStability.getCombinedResistance(),
+      bankStability: this.soilStability.getBankStability(),
+      detachmentThreshold: this.soilStability.getDetachmentThreshold(),
+    };
   }
 }

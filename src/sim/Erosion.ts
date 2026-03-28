@@ -19,6 +19,8 @@ export interface ErosionSettings {
   spillwayIncisionResistance: number;
   outletSillPersistence: number;
   resistanceContrastStrength: number;
+  detachmentThresholdSensitivity: number;
+  bankResistanceStrength: number;
   maxTerrainDeltaPerTick: number;
   settlingRate: number;
   maxSettlingDeltaPerTick: number;
@@ -28,6 +30,17 @@ export interface ErosionStepResult {
   totalEroded: number;
   totalDeposited: number;
   maxTerrainDelta: number;
+}
+
+export interface ErosionStabilityInputs {
+  runoffShare: Float32Array;
+  infiltrationShare: Float32Array;
+  soilCohesion: Float32Array;
+  rootStabilization: Float32Array;
+  organicCover: Float32Array;
+  combinedResistance: Float32Array;
+  bankStability: Float32Array;
+  detachmentThreshold: Float32Array;
 }
 
 export interface TerrainSettlingResult {
@@ -80,6 +93,8 @@ export class ErosionModel {
     spillwayIncisionResistance: 0.9,
     outletSillPersistence: 0.82,
     resistanceContrastStrength: 1.35,
+    detachmentThresholdSensitivity: 1.15,
+    bankResistanceStrength: 0.9,
     maxTerrainDeltaPerTick: 0.0012,
     settlingRate: 0.09,
     maxSettlingDeltaPerTick: 0.00045,
@@ -103,6 +118,8 @@ export class ErosionModel {
   private readonly materialResistanceField: Float32Array;
   private readonly armoringField: Float32Array;
   private readonly spillwayResistanceField: Float32Array;
+  private readonly detachmentThresholdField: Float32Array;
+  private readonly erosivePowerField: Float32Array;
   private readonly referenceStepSeconds = 1 / 30;
 
   public constructor(
@@ -133,6 +150,8 @@ export class ErosionModel {
     this.materialResistanceField = new Float32Array(grid.cellCount);
     this.armoringField = new Float32Array(grid.cellCount);
     this.spillwayResistanceField = new Float32Array(grid.cellCount);
+    this.detachmentThresholdField = new Float32Array(grid.cellCount);
+    this.erosivePowerField = new Float32Array(grid.cellCount);
   }
 
   public setWaterDepthBuffer(waterDepth: Float32Array): void {
@@ -150,6 +169,8 @@ export class ErosionModel {
     this.materialResistanceField.fill(0);
     this.armoringField.fill(0);
     this.spillwayResistanceField.fill(0);
+    this.detachmentThresholdField.fill(0);
+    this.erosivePowerField.fill(0);
   }
 
   public getMaterialResistanceField(): Float32Array {
@@ -164,7 +185,19 @@ export class ErosionModel {
     return this.spillwayResistanceField;
   }
 
-  public step(dtSeconds: number, terrain: TerrainData): ErosionStepResult {
+  public getDetachmentThresholdField(): Float32Array {
+    return this.detachmentThresholdField;
+  }
+
+  public getErosivePowerField(): Float32Array {
+    return this.erosivePowerField;
+  }
+
+  public step(
+    dtSeconds: number,
+    terrain: TerrainData,
+    stability?: ErosionStabilityInputs,
+  ): ErosionStepResult {
     if (!Number.isFinite(dtSeconds) || dtSeconds <= 0) {
       return { totalEroded: 0, totalDeposited: 0, maxTerrainDelta: 0 };
     }
@@ -198,6 +231,14 @@ export class ErosionModel {
           1,
         );
         const channelBias = clamp(accumulatedFlow * 0.62 + activeFlow * 0.38, 0, 1);
+        const runoffShare = stability?.runoffShare[index] ?? 1;
+        const infiltrationShare = stability?.infiltrationShare[index] ?? 0;
+        const cohesion = stability?.soilCohesion[index] ?? 0;
+        const rootStabilization = stability?.rootStabilization[index] ?? 0;
+        const organicCover = stability?.organicCover[index] ?? 0;
+        const ecologicalResistance = stability?.combinedResistance[index] ?? 0;
+        const bankStability = stability?.bankStability[index] ?? ecologicalResistance;
+        const detachmentThreshold = stability?.detachmentThreshold[index] ?? 0.1;
         const coarseCover = this.getCoarseSurfaceCover(index);
         const bedrockExposure = this.getBedrockExposure(index, coarseCover);
         const lagExposure = clamp(
@@ -211,7 +252,10 @@ export class ErosionModel {
           1,
         );
         const erosionResistance = clamp(
-          armoringResistance + bedrockExposure * this.settings.bedrockResistance * 0.68,
+          armoringResistance +
+            bedrockExposure * this.settings.bedrockResistance * 0.68 +
+            ecologicalResistance * 0.72 +
+            cohesion * 0.12,
           0,
           0.995,
         );
@@ -223,8 +267,6 @@ export class ErosionModel {
         );
 
         this.armoringField[index] = armoringResistance;
-        this.materialResistanceField[index] = erosionResistance;
-        this.spillwayResistanceField[index] = spillwayResistance;
 
         let fineSediment = this.suspendedSediment[index];
         let coarseSediment = this.suspendedCoarse[index];
@@ -233,9 +275,35 @@ export class ErosionModel {
           0,
           1,
         );
+        const effectiveSurfacePower = clamp(
+          transportEnergy *
+            (0.42 + runoffShare * 0.58) *
+            (1 - infiltrationShare * 0.24) *
+            (1 - organicCover * 0.08),
+          0,
+          1,
+        );
+        const bankPressure = clamp((1 - channelBias) * 0.34 + slope * 0.42 + waterFactor * 0.24, 0, 1);
+        const effectiveResistance = clamp(
+          erosionResistance * (1 - bankPressure * 0.26) +
+            bankStability * this.settings.bankResistanceStrength * bankPressure * 0.58 +
+            rootStabilization * 0.1,
+          0,
+          0.995,
+        );
         const effectiveCuttingPower = clamp(
-          transportEnergy * (1 - erosionResistance * this.settings.resistanceContrastStrength) +
+          effectiveSurfacePower * (1 - effectiveResistance * this.settings.resistanceContrastStrength) +
             spillwayPressure * (1 - spillwayResistance) * 0.42,
+          0,
+          1,
+        );
+        this.materialResistanceField[index] = effectiveResistance;
+        this.spillwayResistanceField[index] = spillwayResistance;
+        this.detachmentThresholdField[index] = detachmentThreshold;
+        this.erosivePowerField[index] = effectiveSurfacePower;
+        const detachmentDrive = clamp(
+          (effectiveSurfacePower - detachmentThreshold * this.settings.detachmentThresholdSensitivity) /
+            Math.max(1 - detachmentThreshold, 1e-6),
           0,
           1,
         );
@@ -243,11 +311,11 @@ export class ErosionModel {
         const fineCapacity =
           this.settings.sedimentCapacityFactor *
           (0.24 + waterFactor * 0.76) *
-          (0.22 + effectiveCuttingPower * 0.78) *
+          (0.18 + detachmentDrive * 0.82) *
           (0.4 + channelBias * 0.6) *
-          (1 - erosionResistance * 0.82);
+          (1 - effectiveResistance * 0.82);
 
-        if ((transportEnergy > 0.08 || spillwayPressure > 0.18) && waterFactor > 0.03) {
+        if ((detachmentDrive > 0.02 || spillwayPressure > 0.18) && waterFactor > 0.03) {
           const erosionDemand = Math.max(0, fineCapacity - fineSediment);
           const projectedSoil = Math.max(0, this.soilDepth[index] + this.terrainDelta[index]);
           const fineErosion = Math.min(
@@ -255,7 +323,7 @@ export class ErosionModel {
             projectedSoil,
             perTickLimit *
               (0.18 +
-                effectiveCuttingPower * 0.56 +
+                detachmentDrive * 0.56 +
                 spillwayPressure * (1 - spillwayResistance) * 0.26),
           );
 
@@ -278,7 +346,7 @@ export class ErosionModel {
           const bedrockIncision = Math.min(
             this.settings.bedrockIncisionRate *
               dtScale *
-              effectiveCuttingPower *
+              (detachmentDrive * 0.74 + effectiveCuttingPower * 0.26) *
               exposedAfterFine *
               (0.35 + channelBias * 0.65) *
               (1 - projectedCoarseCover * this.settings.armoringStrength * 0.88) *
@@ -298,7 +366,11 @@ export class ErosionModel {
             Math.max(0, this.coarseRock[index] + this.coarseDelta[index]),
             this.settings.coarseTransportRate *
               dtScale *
-              Math.max(0, effectiveCuttingPower - this.settings.coarseEntrainmentThreshold) *
+              Math.max(
+                0,
+                effectiveSurfacePower -
+                  (this.settings.coarseEntrainmentThreshold + detachmentThreshold * 0.24 + armoringResistance * 0.18),
+              ) *
               (0.3 + channelBias * 0.7) *
               (0.35 + waterFactor * 0.65),
           );
