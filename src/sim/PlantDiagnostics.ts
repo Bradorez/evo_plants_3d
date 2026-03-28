@@ -102,6 +102,7 @@ export interface PlantSelectionDiagnostics {
     declinePressure: number;
     competitionPressure: number;
     competitionAdvantage: number;
+    growthBlockReason: string;
   };
   lastOccupant: {
     speciesId: number | null;

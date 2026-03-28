@@ -1342,6 +1342,14 @@ export class VegetationModel {
         declinePressure: this.declinePressureField[index],
         competitionPressure: this.competitionField[index],
         competitionAdvantage: this.competitionAdvantageField[index],
+        growthBlockReason: this.describeGrowthBlockReason(
+          carryingCapacity,
+          this.biomass[index],
+          this.growthPotentialField[index],
+          this.activityLevel[index],
+          this.growthScaleField[index],
+          suitability,
+        ),
       },
       lastOccupant:
         !occupied && this.recentDeathSpeciesId[index] !== SPECIES_NONE
@@ -2050,6 +2058,32 @@ export class VegetationModel {
     ];
     const [label] = entries.sort((left, right) => right[1] - left[1])[0] ?? ["mixed losses", 0];
     return label;
+  }
+
+  private describeGrowthBlockReason(
+    carryingCapacity: number,
+    biomass: number,
+    growthPotential: number,
+    activityLevel: number,
+    growthScale: number,
+    suitability: number,
+  ): string {
+    if (growthPotential <= 0.001 && biomass > carryingCapacity + 0.002) {
+      return "biomass already exceeds local carrying capacity";
+    }
+    if (activityLevel < 0.16) {
+      return "activity is too low for meaningful growth";
+    }
+    if (growthScale < 0.18) {
+      return "seasonal growth scale is strongly suppressed";
+    }
+    if (suitability < this.settings.colonizationThreshold) {
+      return "habitat suitability is weak";
+    }
+    if (growthPotential <= 0.001) {
+      return "there is almost no remaining growth room in this cell";
+    }
+    return "growth is allowed";
   }
 
   private describeReproductionBlockReason(

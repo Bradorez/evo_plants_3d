@@ -245,8 +245,11 @@ class TerrainHydrologyApp {
       }
 
       if (this.sandboxMode === "view") {
-        this.selectedPlantCell = cell;
-        this.refreshSelectedPlantInspection();
+        const inspection = this.simulation.inspectPlantCell(cell.x, cell.y);
+        if (inspection?.occupied) {
+          this.selectedPlantCell = cell;
+          this.controls.setPlantInspection(inspection);
+        }
         return;
       }
 

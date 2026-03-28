@@ -144,6 +144,12 @@ export function createControls(
   const plantInspectUnfavorableValue = queryElement<HTMLElement>("plantInspectUnfavorableValue");
   const plantInspectGrowthPotentialValue = queryElement<HTMLElement>("plantInspectGrowthPotentialValue");
   const plantInspectCapacityPressureValue = queryElement<HTMLElement>("plantInspectCapacityPressureValue");
+  const plantInspectTemperatureStressValue = queryElement<HTMLElement>("plantInspectTemperatureStressValue");
+  const plantInspectFloodLossValue = queryElement<HTMLElement>("plantInspectFloodLossValue");
+  const plantInspectSlopeLossValue = queryElement<HTMLElement>("plantInspectSlopeLossValue");
+  const plantInspectStorageReliefValue = queryElement<HTMLElement>("plantInspectStorageReliefValue");
+  const plantInspectStandingWaterLossValue = queryElement<HTMLElement>("plantInspectStandingWaterLossValue");
+  const plantInspectGrowthBlockValue = queryElement<HTMLElement>("plantInspectGrowthBlockValue");
   const plantInspectExplanationValue = queryElement<HTMLElement>("plantInspectExplanationValue");
   const plantInspectReproductionSummary = queryElement<HTMLElement>("plantInspectReproductionSummary");
   const plantInspectBudgetSummary = queryElement<HTMLElement>("plantInspectBudgetSummary");
@@ -401,6 +407,12 @@ export function createControls(
         plantInspectUnfavorableValue.textContent = "0.00";
         plantInspectGrowthPotentialValue.textContent = "0.00";
         plantInspectCapacityPressureValue.textContent = "0.00";
+        plantInspectTemperatureStressValue.textContent = "0.00";
+        plantInspectFloodLossValue.textContent = "0.000";
+        plantInspectSlopeLossValue.textContent = "0.000";
+        plantInspectStorageReliefValue.textContent = "0.000";
+        plantInspectStandingWaterLossValue.textContent = "0.000";
+        plantInspectGrowthBlockValue.textContent = "-";
         plantInspectExplanationValue.textContent =
           "Click terrain in View mode to inspect a plant cell or empty habitat.";
         plantInspectReproductionSummary.textContent = "reproduction diagnostics unavailable";
@@ -460,6 +472,12 @@ export function createControls(
       plantInspectUnfavorableValue.textContent = selection.budget.unfavorablePressure.toFixed(2);
       plantInspectGrowthPotentialValue.textContent = selection.budget.growthPotential.toFixed(2);
       plantInspectCapacityPressureValue.textContent = selection.budget.declinePressure.toFixed(2);
+      plantInspectTemperatureStressValue.textContent = selection.decline.temperatureStress.toFixed(2);
+      plantInspectFloodLossValue.textContent = selection.budget.floodLoss.toFixed(3);
+      plantInspectSlopeLossValue.textContent = selection.budget.slopeLoss.toFixed(3);
+      plantInspectStorageReliefValue.textContent = selection.budget.storageRelief.toFixed(3);
+      plantInspectStandingWaterLossValue.textContent = selection.budget.standingWaterLoss.toFixed(3);
+      plantInspectGrowthBlockValue.textContent = selection.budget.growthBlockReason;
       plantInspectExplanationValue.textContent = selection.explanation;
       plantInspectReproductionSummary.textContent =
         `Reproduction: ${selection.reproduction.allowedLikely ? "allowed" : "blocked"} because ${selection.reproduction.blockedReason}. Readiness ${selection.currentState.reproductionReadiness.toFixed(2)}, reserve sufficiency ${selection.reproduction.reserveSufficiency.toFixed(2)}, support ${selection.reproduction.neighborSupport.toFixed(2)}.`;
@@ -481,11 +499,11 @@ export function createControls(
           ],
         )}.`;
       plantInspectResourceSummary.textContent =
-        `Reserves: ${formatSigned(selection.budget.reserveDelta, 3)} because gain ${selection.budget.reserveGain.toFixed(3)} and use ${selection.budget.reserveUse.toFixed(3)}. Storage demand ${selection.budget.storageDemand.toFixed(2)}, storage recovery ${selection.budget.storageRecovery.toFixed(2)}.`;
+        `Reserves: ${formatSigned(selection.budget.reserveDelta, 3)} because gain ${selection.budget.reserveGain.toFixed(3)} and use ${selection.budget.reserveUse.toFixed(3)}. Reserve use does not become biomass directly; it only feeds storage relief ${selection.budget.storageRelief.toFixed(3)}.`;
       plantInspectSeasonalSummary.textContent =
         `Seasonal response: opportunity ${selection.budget.opportunity.toFixed(2)}, bad-season pressure ${selection.budget.unfavorablePressure.toFixed(2)}, target activity ${selection.budget.targetActivity.toFixed(2)}, growth scale ${selection.budget.growthScale.toFixed(2)}.`;
       plantInspectDeclineSummary.textContent =
-        `Decline pressure: dominant ${selection.decline.dominantStress}. Total stress ${selection.decline.totalStress.toFixed(2)}, maintenance ${selection.decline.maintenanceBurden.toFixed(2)}, drought ${selection.decline.droughtStress.toFixed(2)}, flood ${selection.decline.floodStress.toFixed(2)}, temperature ${selection.decline.temperatureStress.toFixed(2)}.`;
+        `Decline pressure: dominant ${selection.decline.dominantStress}. Temperature stress is indirect here: it lowers suitability and carrying capacity instead of acting as its own biomass-loss term.`;
       plantInspectFitnessSummary.textContent =
         `Habitat fit: suitability ${selection.fitness.suitability.toFixed(2)}, carrying capacity ${selection.fitness.carryingCapacity.toFixed(2)}, growth potential ${selection.budget.growthPotential.toFixed(2)}, decline pressure ${selection.budget.declinePressure.toFixed(2)}, competition ${selection.budget.competitionPressure.toFixed(2)}.`;
       plantInspectLastOccupantValue.textContent = selection.lastOccupant
