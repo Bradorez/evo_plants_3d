@@ -461,13 +461,13 @@ export class Simulation {
       return;
     }
 
-    if (mode === "planer") {
+    if (mode === "flatten") {
       this.sandbox.planarizeTerrain(this.terrain, cellX, cellY, brushRadiusCells, strength);
       recomputeTerrainBounds(this.terrain);
       return;
     }
 
-    if (mode === "uniniforment") {
+    if (mode === "roughen") {
       this.sandbox.roughenTerrain(this.terrain, cellX, cellY, brushRadiusCells, strength);
       recomputeTerrainBounds(this.terrain);
       return;
@@ -658,10 +658,8 @@ export class Simulation {
   }
 
   private runSlowProcessStep(stepSeconds: number): void {
-    // Disabled by request. The previous terrain relaxation pass smoothed the
-    // world even in fully dry conditions, which made the landscape drift
-    // without any hydrologic cause. Keep the slow-process hook for future
-    // hydrology-aware settling, but do not mutate terrain here for now.
+    // Reserved for future hydrology-aware settling. The current simulation keeps
+    // long-term terrain changes tied to explicit erosion and sandbox tools.
     void stepSeconds;
   }
 

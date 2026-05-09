@@ -1,7 +1,8 @@
 {
-  "name": "terrain-hydrology-sim",
+  "name": "evo-plants-sim-3d",
   "version": "0.1.0",
   "private": true,
+  "description": "Realtime 3D procedural terrain, hydrology, erosion, and plant ecology simulator.",
   "type": "module",
   "scripts": {
     "dev": "vite",

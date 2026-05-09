@@ -55,8 +55,8 @@ export function createControls(
   const sandboxRockButton = queryElement<HTMLButtonElement>("sandboxRockButton");
   const sandboxUpliftButton = queryElement<HTMLButtonElement>("sandboxUpliftButton");
   const sandboxLowerButton = queryElement<HTMLButtonElement>("sandboxLowerButton");
-  const sandboxPlanerButton = queryElement<HTMLButtonElement>("sandboxPlanerButton");
-  const sandboxUniniformentButton = queryElement<HTMLButtonElement>("sandboxUniniformentButton");
+  const sandboxFlattenButton = queryElement<HTMLButtonElement>("sandboxFlattenButton");
+  const sandboxRoughenButton = queryElement<HTMLButtonElement>("sandboxRoughenButton");
   const sandboxWaterSourceButton = queryElement<HTMLButtonElement>("sandboxWaterSourceButton");
   const sandboxEraseSourceButton = queryElement<HTMLButtonElement>("sandboxEraseSourceButton");
   const sandboxBrushInput = queryElement<HTMLInputElement>("sandboxBrushInput");
@@ -214,8 +214,8 @@ export function createControls(
       [sandboxRockButton, "add_rock"],
       [sandboxUpliftButton, "uplift"],
       [sandboxLowerButton, "lower"],
-      [sandboxPlanerButton, "planer"],
-      [sandboxUniniformentButton, "uniniforment"],
+      [sandboxFlattenButton, "flatten"],
+      [sandboxRoughenButton, "roughen"],
       [sandboxWaterSourceButton, "water_source"],
       [sandboxEraseSourceButton, "erase_water_source"],
     ];
@@ -293,11 +293,11 @@ export function createControls(
   sandboxLowerButton.addEventListener("click", () => {
     setSandboxMode("lower");
   });
-  sandboxPlanerButton.addEventListener("click", () => {
-    setSandboxMode("planer");
+  sandboxFlattenButton.addEventListener("click", () => {
+    setSandboxMode("flatten");
   });
-  sandboxUniniformentButton.addEventListener("click", () => {
-    setSandboxMode("uniniforment");
+  sandboxRoughenButton.addEventListener("click", () => {
+    setSandboxMode("roughen");
   });
   sandboxWaterSourceButton.addEventListener("click", () => {
     setSandboxMode("water_source");

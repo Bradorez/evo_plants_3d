@@ -6,8 +6,8 @@ export type SandboxToolMode =
   | "add_rock"
   | "uplift"
   | "lower"
-  | "planer"
-  | "uniniforment"
+  | "flatten"
+  | "roughen"
   | "water_source"
   | "erase_water_source";
 
