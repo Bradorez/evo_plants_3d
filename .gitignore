@@ -9,6 +9,7 @@ dist/
 .env
 .env.*
 !.env.example
+agents.md
 
 # Logs
 *.log
@@ -26,3 +27,4 @@ pnpm-debug.log*
 coverage/
 playwright-report/
 test-results/
+path/to/file
